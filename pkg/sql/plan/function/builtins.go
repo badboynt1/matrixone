@@ -209,7 +209,7 @@ var builtins = map[int]Functions{
 	},
 	DATE: {
 		Id:     DATE,
-		Flag:   plan.Function_STRICT,
+		Flag:   plan.Function_STRICT | plan.Function_MONOTONIC,
 		Layout: STANDARD_FUNCTION,
 		Overloads: []Function{
 			{
@@ -269,24 +269,36 @@ var builtins = map[int]Functions{
 			},
 			{
 				Index:     3,
+				Args:      []types.T{types.T_int64},
+				ReturnTyp: types.T_time,
+				Fn:        unary.Int64ToTime,
+			},
+			{
+				Index:     4,
+				Args:      []types.T{types.T_decimal128},
+				ReturnTyp: types.T_time,
+				Fn:        unary.Decimal128ToTime,
+			},
+			{
+				Index:     5,
 				Args:      []types.T{types.T_varchar},
 				ReturnTyp: types.T_time,
 				Fn:        unary.DateStringToTime,
 			},
 			{
-				Index:     4,
+				Index:     6,
 				Args:      []types.T{types.T_char},
 				ReturnTyp: types.T_time,
 				Fn:        unary.DateStringToTime,
 			},
 			{
-				Index:     5,
+				Index:     7,
 				Args:      []types.T{types.T_text},
 				ReturnTyp: types.T_time,
 				Fn:        unary.DateStringToTime,
 			},
 			{
-				Index:     6,
+				Index:     8,
 				Args:      []types.T{types.T_blob},
 				ReturnTyp: types.T_time,
 				Fn:        unary.DateStringToTime,
@@ -724,7 +736,7 @@ var builtins = map[int]Functions{
 	},
 	YEAR: {
 		Id:     YEAR,
-		Flag:   plan.Function_STRICT,
+		Flag:   plan.Function_STRICT | plan.Function_MONOTONIC,
 		Layout: STANDARD_FUNCTION,
 		Overloads: []Function{
 			{
@@ -822,7 +834,7 @@ var builtins = map[int]Functions{
 	// variadic functions
 	CEIL: {
 		Id:     CEIL,
-		Flag:   plan.Function_STRICT,
+		Flag:   plan.Function_STRICT | plan.Function_MONOTONIC,
 		Layout: STANDARD_FUNCTION,
 		Overloads: []Function{
 			{
@@ -871,7 +883,7 @@ var builtins = map[int]Functions{
 	},
 	FLOOR: {
 		Id:     FLOOR,
-		Flag:   plan.Function_STRICT,
+		Flag:   plan.Function_STRICT | plan.Function_MONOTONIC,
 		Layout: STANDARD_FUNCTION,
 		Overloads: []Function{
 			{
@@ -943,7 +955,7 @@ var builtins = map[int]Functions{
 	},
 	PI: {
 		Id:     PI,
-		Flag:   plan.Function_STRICT,
+		Flag:   plan.Function_STRICT | plan.Function_MONOTONIC,
 		Layout: STANDARD_FUNCTION,
 		Overloads: []Function{
 			{
@@ -956,7 +968,7 @@ var builtins = map[int]Functions{
 	},
 	ROUND: {
 		Id:     ROUND,
-		Flag:   plan.Function_STRICT,
+		Flag:   plan.Function_STRICT | plan.Function_MONOTONIC,
 		Layout: STANDARD_FUNCTION,
 		Overloads: []Function{
 			{
@@ -1546,9 +1558,9 @@ var builtins = map[int]Functions{
 			{
 				Index:     3,
 				Volatile:  true,
-				Args:      []types.T{types.T_varchar, types.T_float64},
-				ReturnTyp: types.T_float64,
-				Fn:        multi.UnixTimestampVarcharToFloat64,
+				Args:      []types.T{types.T_varchar, types.T_decimal128},
+				ReturnTyp: types.T_decimal128,
+				Fn:        multi.UnixTimestampVarcharToDecimal128,
 			},
 		},
 	},
@@ -2419,16 +2431,16 @@ var builtins = map[int]Functions{
 			{
 				Index:     0,
 				Volatile:  true,
-				Args:      []types.T{types.T_datetime, types.T_datetime},
-				ReturnTyp: types.T_varchar,
-				Fn:        binary.TimeDiff[types.Datetime],
+				Args:      []types.T{types.T_time, types.T_time},
+				ReturnTyp: types.T_time,
+				Fn:        binary.TimeDiff[types.Time],
 			},
 			{
 				Index:     1,
 				Volatile:  true,
-				Args:      []types.T{types.T_time, types.T_time},
-				ReturnTyp: types.T_varchar,
-				Fn:        binary.TimeDiff[types.Time],
+				Args:      []types.T{types.T_datetime, types.T_datetime},
+				ReturnTyp: types.T_time,
+				Fn:        binary.TimeDiff[types.Datetime],
 			},
 		},
 	},
@@ -2443,6 +2455,27 @@ var builtins = map[int]Functions{
 				Args:      []types.T{types.T_varchar, types.T_varchar, types.T_varchar},
 				ReturnTyp: types.T_varchar,
 				Fn:        ctl.Handler,
+			},
+		},
+	},
+	MO_SHOW_VISIBLE_BIN: {
+		Id:     MO_SHOW_VISIBLE_BIN,
+		Flag:   plan.Function_STRICT,
+		Layout: STANDARD_FUNCTION,
+		Overloads: []Function{
+			{
+				Index:     0,
+				Volatile:  true,
+				Args:      []types.T{types.T_varchar, types.T_uint8},
+				ReturnTyp: types.T_varchar,
+				Fn:        binary.ShowVisibleBin,
+			},
+			{
+				Index:     1,
+				Volatile:  true,
+				Args:      []types.T{types.T_text, types.T_uint8},
+				ReturnTyp: types.T_varchar,
+				Fn:        binary.ShowVisibleBin,
 			},
 		},
 	},

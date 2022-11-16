@@ -32,59 +32,40 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/model"
 )
 
-/*
-
-Notes:
- 1. in BlockReadInner function, tae vector is used, because it is easy to to apply deletion,
-    and in BlockRead, the result batch from BlockReadInner will be converted to mo batch without copying
-
- 2. in BlockReadInner, rowid column is generated locally, its memory allocation happens in MPool,
- 	so the corresponding mo vector's 'original' field is False, when its Free() is called, the memory will be freed.
-	Other columns are read from objectio.Reader, but for now, it memory is managed by golang runtime, so their 'original' fields are True, which means nothing to do when its Free() is Called.
-	Later, the mpool will be added to objectio.Reader, and let the mpool hold columns data. After that, all orginal fields will be False.
-
-*/
-
 // BlockRead read block data from storage and apply deletes according given timestamp. Caller make sure metaloc is not empty
 func BlockRead(
 	ctx context.Context,
 	info *pkgcatalog.BlockInfo,
 	columns []string,
+	colIdxs []uint16,
+	colTypes []types.Type,
+	colNulls []bool,
 	tableDef *plan.TableDef,
 	ts timestamp.Timestamp,
 	fs fileservice.FileService,
 	pool *mpool.MPool) (*batch.Batch, error) {
 
-	// prepare
-	columnLength := len(columns)
-	colIdxs := make([]uint16, columnLength)
-	colTyps := make([]types.Type, columnLength)
-	colNulls := make([]bool, columnLength)
-	for i, column := range columns {
-		colIdxs[i] = uint16(tableDef.Name2ColIndex[column])
-		colDef := tableDef.Cols[colIdxs[i]]
-		colTyps[i] = types.T(colDef.Typ.Id).ToType()
-		if colDef.Default != nil {
-			colNulls[i] = colDef.Default.NullAbility
-		}
-	}
-
 	// read
 	columnBatch, err := BlockReadInner(
 		ctx, info,
-		columns, colIdxs, colTyps, colNulls,
+		columns, colIdxs, colTypes, colNulls,
 		types.TimestampToTS(ts), fs, pool,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// convert to mo vec, no copy
 	bat := batch.NewWithSize(len(columns))
 	bat.Attrs = columns
 	for i, vec := range columnBatch.Vecs {
-		movec := containers.UnmarshalToMoVec(vec)
-		bat.Vecs[i] = movec
+		// If the vector uses mpool to allocate memory internally,
+		// it needs to be free here
+		if vec.Allocated() > 0 {
+			bat.Vecs[i] = containers.CopyToMoVec(vec)
+		} else {
+			bat.Vecs[i] = containers.UnmarshalToMoVec(vec)
+		}
+		vec.Close()
 	}
 	bat.SetZs(bat.Vecs[0].Length(), pool)
 
@@ -131,11 +112,10 @@ func readColumnBatchByMetaloc(
 	colTyps []types.Type,
 	colNulls []bool,
 	fs fileservice.FileService,
-	pool *mpool.MPool) (*containers.Batch, error) {
+	pool *mpool.MPool) (bat *containers.Batch, err error) {
 	name, extent, rows := DecodeMetaLoc(metaloc)
 	idxsWithouRowid := make([]uint16, 0, len(colIdxs))
 	var rowidData containers.Vector
-	var err error
 	// sift rowid column
 	for i, typ := range colTyps {
 		if typ.Oid == types.T_Rowid {
@@ -146,17 +126,22 @@ func readColumnBatchByMetaloc(
 				prefix,
 				0,
 				rows,
-				nil,
+				pool,
 			)
 			if err != nil {
 				return nil, err
 			}
+			defer func() {
+				if err != nil {
+					rowidData.Close()
+				}
+			}()
 		} else {
 			idxsWithouRowid = append(idxsWithouRowid, colIdxs[i])
 		}
 	}
 
-	bat := containers.NewBatch()
+	bat = containers.NewBatch()
 
 	// only read rowid column, return early
 	if len(idxsWithouRowid) == 0 {
@@ -172,8 +157,6 @@ func readColumnBatchByMetaloc(
 		return nil, err
 	}
 
-	// TODO: objectio will add mpool later
-	// the ioResult is managed by golang itself.
 	ioResult, err := reader.Read(ctx, extent, idxsWithouRowid, nil)
 	if err != nil {
 		return nil, err
@@ -185,8 +168,9 @@ func readColumnBatchByMetaloc(
 			bat.AddVector(colNames[i], rowidData)
 		} else {
 			vec := vector.New(colTyps[i])
-			err := vec.Read(entry[0].Data)
+			err := vec.Read(entry[0].Object.([]byte))
 			if err != nil {
+				bat.Close()
 				return nil, err
 			}
 			bat.AddVector(colNames[i], containers.NewVectorWithSharedMemory(vec, colNulls[i]))
@@ -213,7 +197,7 @@ func readDeleteBatchByDeltaloc(ctx context.Context, deltaloc string, fs fileserv
 	}
 	for i, entry := range ioResult.Entries {
 		vec := vector.New(colTypes[i])
-		err := vec.Read(entry.Data)
+		err := vec.Read(entry.Object.([]byte))
 		if err != nil {
 			return nil, err
 		}

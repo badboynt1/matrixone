@@ -20,6 +20,7 @@ import (
 	"io"
 
 	"github.com/matrixorigin/matrixone/pkg/common/mpool"
+	"github.com/matrixorigin/matrixone/pkg/fileservice"
 
 	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/container/vector"
@@ -55,17 +56,17 @@ func NewReader(cxt context.Context, fs *objectio.ObjectFS, key string) (*Reader,
 	}, nil
 }
 
-func NewCheckpointReader(fs *objectio.ObjectFS, key string) (*Reader, error) {
+func NewCheckpointReader(fs fileservice.FileService, key string) (*Reader, error) {
 	name, locs, err := DecodeMetaLocToMetas(key)
 	if err != nil {
 		return nil, err
 	}
-	reader, err := objectio.NewObjectReader(name, fs.Service)
+	reader, err := objectio.NewObjectReader(name, fs)
 	if err != nil {
 		return nil, err
 	}
 	return &Reader{
-		fs:     fs,
+		fs:     objectio.NewObjectFS(fs, ""),
 		reader: reader,
 		key:    key,
 		name:   name,
@@ -93,7 +94,43 @@ func (r *Reader) LoadBlkColumnsByMeta(
 			return bat, err
 		}
 		pkgVec := vector.New(colTypes[i])
-		if err = pkgVec.Read(data.Entries[0].Data); err != nil && !errors.Is(err, io.EOF) {
+		if err = pkgVec.Read(data.Entries[0].Object.([]byte)); err != nil && !errors.Is(err, io.EOF) {
+			return bat, err
+		}
+		var vec containers.Vector
+		if pkgVec.Length() == 0 {
+			vec = containers.MakeVector(colTypes[i], nullables[i])
+		} else {
+			vec = containers.NewVectorWithSharedMemory(pkgVec, nullables[i])
+		}
+		bat.AddVector(colNames[i], vec)
+		bat.Vecs[i] = vec
+	}
+	return bat, nil
+}
+
+func (r *Reader) LoadBlkColumnsByMetaAndIdx(
+	colTypes []types.Type,
+	colNames []string,
+	nullables []bool,
+	block objectio.BlockObject,
+	idx int) (*containers.Batch, error) {
+	bat := containers.NewBatch()
+
+	for i := range colNames {
+		if block.GetExtent().End() == 0 {
+			continue
+		}
+		col, err := block.GetColumn(uint16(idx))
+		if err != nil {
+			return bat, err
+		}
+		data, err := col.GetData(r.readCxt, nil)
+		if err != nil {
+			return bat, err
+		}
+		pkgVec := vector.New(colTypes[i])
+		if err = pkgVec.Read(data.Entries[0].Object.([]byte)); err != nil && !errors.Is(err, io.EOF) {
 			return bat, err
 		}
 		var vec containers.Vector

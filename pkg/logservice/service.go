@@ -33,6 +33,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/logutil"
 	pb "github.com/matrixorigin/matrixone/pkg/pb/logservice"
 	"github.com/matrixorigin/matrixone/pkg/taskservice"
+	"github.com/matrixorigin/matrixone/pkg/util/trace"
 )
 
 const (
@@ -126,7 +127,8 @@ func NewService(
 	// TODO: check and fix all these magic numbers
 	codec := morpc.NewMessageCodec(mf,
 		morpc.WithCodecPayloadCopyBufferSize(16*1024),
-		morpc.WithCodecEnableChecksum())
+		morpc.WithCodecEnableChecksum(),
+		morpc.WithCodecMaxBodySize(int(cfg.RPC.MaxMessageSize)))
 	server, err := morpc.NewRPCServer(LogServiceRPCName, cfg.ServiceListenAddress, codec,
 		morpc.WithServerGoettyOptions(goetty.WithSessionReleaseMsgFunc(func(i interface{}) {
 			respPool.Put(i.(morpc.RPCMessage).Message)
@@ -197,6 +199,8 @@ func (s *Service) ID() string {
 
 func (s *Service) handleRPCRequest(ctx context.Context, req morpc.Message,
 	seq uint64, cs morpc.ClientSession) error {
+	ctx, span := trace.Debug(ctx, "Service.handleRPCRequest")
+	defer span.End()
 	rr, ok := req.(*RPCRequest)
 	if !ok {
 		panic("unexpected message type")
@@ -431,5 +435,7 @@ func (s *Service) getBackendOptions() []morpc.BackendOption {
 
 // NB: leave an empty method for future extension.
 func (s *Service) getClientOptions() []morpc.ClientOption {
-	return nil
+	return []morpc.ClientOption{
+		morpc.WithClientTag("log-heartbeat"),
+	}
 }

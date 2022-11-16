@@ -21,7 +21,6 @@ import (
 
 	"github.com/matrixorigin/matrixone/pkg/config"
 	"github.com/matrixorigin/matrixone/pkg/defines"
-	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/util/metric"
 )
 
@@ -117,12 +116,13 @@ func (routine *Routine) Loop(routineCtx context.Context) {
 	var resp *Response
 	var counted bool
 	var requestChan = routine.GetRequestChannel()
+	var ses *Session
 	//session for the connection
 	for {
 		quit := false
 		select {
 		case <-routineCtx.Done():
-			logutil.Debugf("-----cancel routine")
+			logDebugf(routine.GetSession().GetConciseProfile(), "-----cancel routine")
 			quit = true
 			if counted {
 				metric.ConnectionCounter(routine.GetSession().GetTenantInfo().Tenant).Dec()
@@ -148,7 +148,8 @@ func (routine *Routine) Loop(routineCtx context.Context) {
 		cancelRequestCtx, cancelRequestFunc := context.WithTimeout(routineCtx, pu.SV.SessionTimeout.Duration)
 		executor := routine.GetCmdExecutor()
 		executor.(*MysqlCmdExecutor).setCancelRequestFunc(cancelRequestFunc)
-		ses := routine.GetSession()
+		ses = routine.GetSession()
+		ses.MakeProfile()
 		tenant := ses.GetTenantInfo()
 		tenantCtx := context.WithValue(cancelRequestCtx, defines.TenantIDKey{}, tenant.GetTenantID())
 		tenantCtx = context.WithValue(tenantCtx, defines.UserIDKey{}, tenant.GetUserID())
@@ -157,20 +158,30 @@ func (routine *Routine) Loop(routineCtx context.Context) {
 		executor.PrepareSessionBeforeExecRequest(routine.GetSession())
 
 		if resp, err = executor.ExecRequest(tenantCtx, req); err != nil {
-			logutil.Errorf("routine execute request failed. error:%v \n", err)
+			logErrorf(ses.GetConciseProfile(), "routine execute request failed. error:%v \n", err)
 		}
 
 		if resp != nil {
 			if err = routine.GetClientProtocol().SendResponse(resp); err != nil {
-				logutil.Errorf("routine send response failed %v. error:%v ", resp, err)
+				logErrorf(ses.GetConciseProfile(), "routine send response failed %v. error:%v ", resp, err)
 			}
 		}
 
 		if !pu.SV.DisableRecordTimeElapsedOfSqlRequest {
-			logutil.Debugf("connection id %d , the time of handling the request %s", routine.getConnID(), time.Since(reqBegin).String())
+			logDebugf(ses.GetConciseProfile(), "the time of handling the request %s", time.Since(reqBegin).String())
 		}
 
 		cancelRequestFunc()
+	}
+
+	ses = routine.GetSession()
+	//ensure cleaning the transaction
+	if ses != nil {
+		logErrorf(ses.GetConciseProfile(), "rollback the txn.")
+		err = ses.TxnRollback()
+		if err != nil {
+			logErrorf(ses.GetConciseProfile(), "rollback txn failed.error:%v", err)
+		}
 	}
 }
 

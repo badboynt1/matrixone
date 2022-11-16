@@ -179,10 +179,12 @@ func buildDefaultExpr(col *tree.ColumnTableDef, typ *plan.Type) (*plan.Default, 
 		return nil, err
 	}
 
+	fmtCtx := tree.NewFmtCtx(dialect.MYSQL, tree.WithSingleQuoteString())
+	fmtCtx.PrintExpr(expr, expr, false)
 	return &plan.Default{
 		NullAbility:  nullAbility,
 		Expr:         newExpr,
-		OriginString: tree.String(expr, dialect.MYSQL),
+		OriginString: fmtCtx.String(),
 	}, nil
 }
 
@@ -297,7 +299,7 @@ func getDefaultExpr(d *plan.ColDef) (*Expr, error) {
 }
 
 func judgeUnixTimestampReturnType(timestr string) types.T {
-	retDecimal := -1
+	retDecimal := 0
 	if dotIdx := strings.LastIndex(timestr, "."); dotIdx >= 0 {
 		retDecimal = len(timestr) - dotIdx - 1
 	}
@@ -309,6 +311,6 @@ func judgeUnixTimestampReturnType(timestr string) types.T {
 	if retDecimal == 0 {
 		return types.T_int64
 	} else {
-		return types.T_float64
+		return types.T_decimal128
 	}
 }

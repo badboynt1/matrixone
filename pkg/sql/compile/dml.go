@@ -68,7 +68,9 @@ func (s *Scope) Delete(c *Compile) (uint64, error) {
 		if err != nil {
 			return 0, err
 		}
-		return 0, nil
+
+		affectRows, err := rel.Rows(s.Proc.Ctx)
+		return uint64(affectRows), err
 	}
 
 	if err := s.MergeRun(c); err != nil {
@@ -108,6 +110,7 @@ func (s *Scope) InsertValues(c *Compile, stmt *tree.Insert) (uint64, error) {
 	}
 
 	bat := makeInsertBatch(p)
+	defer bat.Clean(c.proc.Mp())
 
 	if p.OtherCols != nil {
 		p.ExplicitCols = append(p.ExplicitCols, p.OtherCols...)

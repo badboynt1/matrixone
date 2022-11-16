@@ -161,8 +161,9 @@ func buildDNConfig(
 	}
 	cfg.DataDir = filepath.Join(opt.rootDataDir, cfg.UUID)
 	cfg.HAKeeper.ClientConfig.ServiceAddresses = address.listHAKeeperListenAddresses()
-	cfg.HAKeeper.HeatbeatDuration.Duration = opt.heartbeat.dn
+	cfg.HAKeeper.HeatbeatInterval.Duration = opt.heartbeat.dn
 	cfg.Txn.Storage.Backend = opt.storage.dnStorage
+	cfg.Txn.Storage.LogBackend = "logservice"
 
 	// FIXME: disable tae flush
 	cfg.Ckp.MinCount = 2000000
@@ -214,6 +215,7 @@ func buildDNOptions(cfg *dnservice.Config, filter FilterFunc) dnOptions {
 		ctx = logservice.SetBackendOptions(ctx, morpc.WithBackendFilter(filter))
 
 		return logservice.NewClient(ctx, logservice.ClientConfig{
+			Tag:              "Test-DN",
 			ReadOnly:         false,
 			LogShardID:       shard.LogShardID,
 			DNReplicaID:      shard.ReplicaID,

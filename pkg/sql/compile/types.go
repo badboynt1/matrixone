@@ -22,6 +22,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/pb/pipeline"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
+	"github.com/matrixorigin/matrixone/pkg/pb/timestamp"
 	"github.com/matrixorigin/matrixone/pkg/sql/parsers/tree"
 	plan2 "github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"github.com/matrixorigin/matrixone/pkg/txn/client"
@@ -64,6 +65,8 @@ type Source struct {
 	R            engine.Reader
 	Bat          *batch.Batch
 	Expr         *plan.Expr
+	TableDef     *plan.TableDef
+	Timestamp    timestamp.Timestamp
 }
 
 // Col is the information of attribute
@@ -86,6 +89,9 @@ type Scope struct {
 
 	// IsEnd means the pipeline is end
 	IsEnd bool
+
+	// IsRemote means the pipeline is remote
+	IsRemote bool
 
 	Plan *plan.Plan
 	// DataSource stores information about data source.
@@ -139,6 +145,8 @@ type Compile struct {
 	fill func(any, *batch.Batch) error
 	//affectRows stores the number of rows affected while insert / update / delete
 	affectRows uint64
+	// cn address
+	addr string
 	// db current database name.
 	db string
 	// uid the user who initiated the sql.

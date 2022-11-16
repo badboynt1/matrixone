@@ -33,6 +33,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/cnservice/cnclient"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/common/stopper"
+	"github.com/matrixorigin/matrixone/pkg/defines"
 	"github.com/matrixorigin/matrixone/pkg/dnservice"
 	"github.com/matrixorigin/matrixone/pkg/fileservice"
 	"github.com/matrixorigin/matrixone/pkg/logservice"
@@ -99,6 +100,11 @@ func waitSignalToStop(stopper *stopper.Stopper) {
 	sig := <-sigchan
 	logutil.GetGlobalLogger().Info("Starting shutdown...", zap.String("signal", sig.String()))
 	stopper.Stop()
+	if cnProxy != nil {
+		if err := cnProxy.Stop(); err != nil {
+			logutil.GetGlobalLogger().Error("shutdown cn proxy failed", zap.Error(err))
+		}
+	}
 }
 
 func startService(cfg *Config, stopper *stopper.Stopper) error {
@@ -111,7 +117,7 @@ func startService(cfg *Config, stopper *stopper.Stopper) error {
 
 	setupGlobalComponents(cfg, stopper)
 
-	fs, err := cfg.createFileService(localFileServiceName)
+	fs, err := cfg.createFileService(defines.LocalFileServiceName)
 	if err != nil {
 		return err
 	}
@@ -275,6 +281,7 @@ func initTraceMetric(ctx context.Context, cfg *Config, stopper *stopper.Stopper,
 				trace.WithExportInterval(SV.TraceExportInterval),
 				trace.WithLongQueryTime(SV.LongQueryTime),
 				trace.WithSQLExecutor(nil),
+				trace.DebugMode(SV.EnableTraceDebug),
 			); err != nil {
 				panic(err)
 			}
@@ -293,11 +300,8 @@ func initTraceMetric(ctx context.Context, cfg *Config, stopper *stopper.Stopper,
 			metric.WithExportInterval(SV.MetricExportInterval),
 			metric.WithMultiTable(SV.MetricMultiTable))
 	}
-	if SV.MergeCycle.Duration > 0 {
-		err = export.InitCronExpr(SV.MergeCycle.Duration)
-		if err != nil {
-			return err
-		}
+	if err = export.InitMerge(SV.MergeCycle.Duration, SV.MergeMaxFileSize); err != nil {
+		return err
 	}
 	return nil
 }
