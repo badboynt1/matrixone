@@ -61,6 +61,7 @@ type ShowCreateDatabase struct {
 
 func (node *ShowCreateDatabase) Format(ctx *FmtCtx) {
 	ctx.WriteString("show create database")
+
 	if node.IfNotExists {
 		ctx.WriteString(" if not exists")
 	}
