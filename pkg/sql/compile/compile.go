@@ -718,6 +718,7 @@ func (c *Compile) compileProjection(n *plan.Node, ss []*Scope) []*Scope {
 			Arg: constructProjection(n),
 		})
 	}
+	c.anal.analInfos[c.anal.curr].Dop++
 	return ss
 }
 
@@ -1247,6 +1248,7 @@ func (c *Compile) fillAnalyzeInfo() {
 		}
 		c.anal.qry.Nodes[i].AnalyzeInfo.InputRows = atomic.LoadInt64(&anal.InputRows)
 		c.anal.qry.Nodes[i].AnalyzeInfo.OutputRows = atomic.LoadInt64(&anal.OutputRows)
+		c.anal.qry.Nodes[i].AnalyzeInfo.StatsRows = atomic.LoadInt64(&anal.StatsRows)
 		c.anal.qry.Nodes[i].AnalyzeInfo.InputSize = atomic.LoadInt64(&anal.InputSize)
 		c.anal.qry.Nodes[i].AnalyzeInfo.OutputSize = atomic.LoadInt64(&anal.OutputSize)
 		c.anal.qry.Nodes[i].AnalyzeInfo.TimeConsumed = atomic.LoadInt64(&anal.TimeConsumed)

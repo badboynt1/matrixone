@@ -439,6 +439,8 @@ func (a AnalyzeInfoDescribeImpl) GetDescription(options *ExplainOptions) (string
 	result := "timeConsumed=" + strconv.FormatInt(a.AnalyzeInfo.TimeConsumed, 10) + "us" +
 		" inputRows=" + strconv.FormatInt(a.AnalyzeInfo.InputRows, 10) +
 		" outputRows=" + strconv.FormatInt(a.AnalyzeInfo.OutputRows, 10) +
+		" statsRows=" + strconv.FormatInt(a.AnalyzeInfo.StatsRows/(a.AnalyzeInfo.Dop+1), 10) +
+		" dop=" + strconv.FormatInt(a.AnalyzeInfo.Dop+1, 10) +
 		" inputSize=" + strconv.FormatInt(a.AnalyzeInfo.InputSize, 10) + "bytes" +
 		" outputSize=" + strconv.FormatInt(a.AnalyzeInfo.OutputSize, 10) + "bytes" +
 		" memorySize=" + strconv.FormatInt(a.AnalyzeInfo.MemorySize, 10) + "bytes"

@@ -75,6 +75,7 @@ func Call(idx int, proc *process.Process, arg any) (bool, error) {
 	bat.Zs = nil
 	bat.Clean(proc.Mp())
 	anal.Output(rbat)
+	anal.Stats(rbat)
 	proc.SetInputBatch(rbat)
 	return false, nil
 }

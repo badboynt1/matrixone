@@ -26,6 +26,7 @@ func NewAnalyzeInfo(nodeId int32) *AnalyzeInfo {
 		NodeId:       nodeId,
 		InputRows:    0,
 		OutputRows:   0,
+		StatsRows:    0,
 		TimeConsumed: 0,
 		InputSize:    0,
 		OutputSize:   0,
@@ -60,5 +61,11 @@ func (a *analyze) Output(bat *batch.Batch) {
 	if a.analInfo != nil && bat != nil {
 		atomic.AddInt64(&a.analInfo.OutputSize, int64(bat.Size()))
 		atomic.AddInt64(&a.analInfo.OutputRows, int64(bat.Length()))
+	}
+}
+
+func (a *analyze) Stats(bat *batch.Batch) {
+	if a.analInfo != nil && bat != nil {
+		atomic.AddInt64(&a.analInfo.StatsRows, int64(bat.Length()))
 	}
 }

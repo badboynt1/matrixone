@@ -384,6 +384,8 @@ message AnalyzeInfo {
     int64 output_size = 4;
     int64 time_consumed = 5;
     int64 memory_size = 6;
+	int64 stats_rows = 7;
+	int64 dop = 8;
 }
 
 message Node {

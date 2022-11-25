@@ -117,6 +117,7 @@ func (ctr *container) emptyProbe(bat *batch.Batch, ap *Argument, proc *process.P
 	}
 	rbat.ExpandNulls()
 	anal.Output(rbat)
+	anal.Stats(rbat)
 	proc.SetInputBatch(rbat)
 	return nil
 }
@@ -131,6 +132,7 @@ func (ctr *container) probe(bat *batch.Batch, ap *Argument, proc *process.Proces
 	}
 	if (ctr.bat.Length() == 1 && ctr.hasNull) || ctr.bat.Length() == 0 {
 		anal.Output(rbat)
+		anal.Stats(rbat)
 		proc.SetInputBatch(rbat)
 		return nil
 	}
@@ -193,6 +195,7 @@ func (ctr *container) probe(bat *batch.Batch, ap *Argument, proc *process.Proces
 	}
 	rbat.ExpandNulls()
 	anal.Output(rbat)
+	anal.Stats(rbat)
 	proc.SetInputBatch(rbat)
 	return nil
 }

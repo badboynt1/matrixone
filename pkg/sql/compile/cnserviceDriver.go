@@ -1123,6 +1123,7 @@ func mergeAnalyseInfo(target *anaylze, ana *pipeline.AnalysisList) {
 		n := source[i]
 		target.analInfos[i].OutputSize += n.OutputSize
 		target.analInfos[i].OutputRows += n.OutputRows
+		target.analInfos[i].StatsRows += n.StatsRows
 		target.analInfos[i].InputRows += n.InputRows
 		target.analInfos[i].InputSize += n.InputSize
 		target.analInfos[i].MemorySize += n.MemorySize
@@ -1250,6 +1251,7 @@ func convertToPlanAnalyzeInfo(info *process.AnalyzeInfo) *plan.AnalyzeInfo {
 	return &plan.AnalyzeInfo{
 		InputRows:    info.InputRows,
 		OutputRows:   info.OutputRows,
+		StatsRows:    info.StatsRows,
 		InputSize:    info.InputSize,
 		OutputSize:   info.OutputSize,
 		TimeConsumed: info.TimeConsumed,

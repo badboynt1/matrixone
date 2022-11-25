@@ -32,6 +32,7 @@ type Analyze interface {
 	Alloc(int64)
 	Input(*batch.Batch)
 	Output(*batch.Batch)
+	Stats(*batch.Batch)
 }
 
 // WaitRegister channel
@@ -87,10 +88,14 @@ type SessionInfo struct {
 type AnalyzeInfo struct {
 	// NodeId, index of query's node list
 	NodeId int32
+	// dop of current node
+	Dop int32
 	// InputRows, number of rows accepted by node
 	InputRows int64
 	// OutputRows, number of rows output by node
 	OutputRows int64
+	// StatsRows, number of rows used by stats
+	StatsRows int64
 	// TimeConsumed, time taken by the node in milliseconds
 	TimeConsumed int64
 	// InputSize, data size accepted by node
