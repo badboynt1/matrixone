@@ -114,6 +114,7 @@ func (ctr *container) emptyProbe(bat *batch.Batch, ap *Argument, proc *process.P
 	rbat.Zs = bat.Zs
 	bat.Zs = nil
 	anal.Output(rbat)
+	anal.Stats(rbat)
 	proc.SetInputBatch(rbat)
 	return nil
 }
@@ -212,6 +213,7 @@ func (ctr *container) probe(bat *batch.Batch, ap *Argument, proc *process.Proces
 	bat.Zs = nil
 	rbat.ExpandNulls()
 	anal.Output(rbat)
+	anal.Stats(rbat)
 	proc.SetInputBatch(rbat)
 	return nil
 }
