@@ -324,6 +324,9 @@ func (c *SpanContext) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	if !c.SpanID.IsZero() {
 		enc.AddString("span_id", c.SpanID.String())
 	}
+	if c.Kind != SpanKindInternal {
+		enc.AddString("kind", c.Kind.String())
+	}
 	return nil
 }
 
@@ -376,18 +379,6 @@ func (f spanOptionFunc) applySpanStart(cfg *SpanConfig) {
 func WithNewRoot(newRoot bool) spanOptionFunc {
 	return spanOptionFunc(func(cfg *SpanConfig) {
 		cfg.NewRoot = newRoot
-	})
-}
-
-func WithTraceID(id TraceID) spanOptionFunc {
-	return spanOptionFunc(func(cfg *SpanConfig) {
-		cfg.TraceID = id
-	})
-}
-
-func WithSpanID(id SpanID) spanOptionFunc {
-	return spanOptionFunc(func(cfg *SpanConfig) {
-		cfg.SpanID = id
 	})
 }
 
