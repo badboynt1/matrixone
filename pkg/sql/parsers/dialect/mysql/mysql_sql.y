@@ -114,6 +114,7 @@ import (
     unresolveNames []*tree.UnresolvedName
 
     partitionOption *tree.PartitionOption
+    clusterByOption *tree.ClusterByOption
     partitionBy *tree.PartitionBy
     windowSpec *tree.WindowSpec
     windowFrame *tree.WindowFrame
@@ -260,7 +261,7 @@ import (
 %token <str> MAX_ROWS MIN_ROWS PACK_KEYS ROW_FORMAT STATS_AUTO_RECALC STATS_PERSISTENT STATS_SAMPLE_PAGES
 %token <str> DYNAMIC COMPRESSED REDUNDANT COMPACT FIXED COLUMN_FORMAT AUTO_RANDOM
 %token <str> RESTRICT CASCADE ACTION PARTIAL SIMPLE CHECK ENFORCED
-%token <str> RANGE LIST ALGORITHM LINEAR PARTITIONS SUBPARTITION SUBPARTITIONS
+%token <str> RANGE LIST ALGORITHM LINEAR PARTITIONS SUBPARTITION SUBPARTITIONS CLUSTER
 %token <str> TYPE ANY SOME EXTERNAL LOCALFILE URL
 %token <str> PREPARE DEALLOCATE
 
@@ -296,7 +297,7 @@ import (
 %token <str> FORMAT VERBOSE CONNECTION TRIGGERS PROFILES
 
 // Load
-%token <str> LOAD INFILE TERMINATED OPTIONALLY ENCLOSED ESCAPED STARTING LINES ROWS IMPORT FROM_JSONLINE
+%token <str> LOAD INFILE TERMINATED OPTIONALLY ENCLOSED ESCAPED STARTING LINES ROWS IMPORT
 
 // MODump
 %token <str> MODUMP
@@ -339,13 +340,7 @@ import (
 %token <str> SYSTEM_USER TRANSLATE TRIM VARIANCE VAR_POP VAR_SAMP AVG
 
 //JSON function
-%token <str> JSON_EXTRACT ARROW
-
-// JSON table function
-%token <str> UNNEST
-
-// table function
-%token <str> GENERATE_SERIES
+%token <str> ARROW
 
 // Insert
 %token <str> ROW OUTFILE HEADER MAX_FILE_SIZE FORCE_QUOTE
@@ -436,7 +431,6 @@ import (
 %type <funcExpr> function_call_keyword
 %type <funcExpr> function_call_nonkeyword
 %type <funcExpr> function_call_aggregate
-//%type <funcExpr> function_call_json
 
 %type <unresolvedName> column_name column_name_unresolved
 %type <strs> enum_values force_quote_opt force_quote_list infile_or_s3_param infile_or_s3_params
@@ -504,6 +498,7 @@ import (
 %type <privilegeLevel> priv_level
 %type <unresolveNames> column_name_list
 %type <partitionOption> partition_by_opt
+%type <clusterByOption> cluster_by_opt
 %type <partitionBy> partition_method sub_partition_method sub_partition_opt
 %type <windowSpec> window_spec_opt
 %type <windowFrame> window_frame window_frame_opt
@@ -3706,27 +3701,16 @@ table_subquery:
     }
 
 table_function:
-    UNNEST '(' expression_list ')'
+    ident '(' expression_list_opt ')'
     {
-       	name := tree.SetUnresolvedName(strings.ToLower($1))
+        name := tree.SetUnresolvedName(strings.ToLower($1))
         $$ = &tree.TableFunction{
-	    Func: &tree.FuncExpr{
-                Func: tree.FuncName2ResolvableFunctionReference(name),
-                Exprs: $3,
-                Type: tree.FUNC_TYPE_TABLE,
+       	    Func: &tree.FuncExpr{
+        	Func: tree.FuncName2ResolvableFunctionReference(name),
+        	Exprs: $3,
+        	Type: tree.FUNC_TYPE_TABLE,
             },
-	}
-    }
-|   GENERATE_SERIES '(' expression_list ')'
-    {
-       	name := tree.SetUnresolvedName(strings.ToLower($1))
-	$$ = &tree.TableFunction{
-	    Func: &tree.FuncExpr{
-		Func: tree.FuncName2ResolvableFunctionReference(name),
-		Exprs: $3,
-		Type: tree.FUNC_TYPE_TABLE,
-	    },
-	}
+        }
     }
 
 aliased_table_name:
@@ -4462,7 +4446,7 @@ default_opt:
     }
 
 create_table_stmt:
-    CREATE temporary_opt TABLE not_exists_opt table_name '(' table_elem_list_opt ')' table_option_list_opt partition_by_opt
+    CREATE temporary_opt TABLE not_exists_opt table_name '(' table_elem_list_opt ')' table_option_list_opt partition_by_opt cluster_by_opt
     {
         $$ = &tree.CreateTable {
             Temporary: $2,
@@ -4471,6 +4455,7 @@ create_table_stmt:
             Defs: $7,
             Options: $9,
             PartitionOption: $10,
+            ClusterByOption: $11, 
         }
     }
 |   CREATE EXTERNAL TABLE not_exists_opt table_name '(' table_elem_list_opt ')' load_param_opt_2
@@ -4565,6 +4550,24 @@ partition_by_opt:
             PartBy: *$3,
             SubPartBy: $5,
             Partitions: $6,
+        }
+    }
+
+cluster_by_opt:
+    {
+        $$ = nil
+    }
+|   CLUSTER BY column_name
+    {
+        $$ = &tree.ClusterByOption{
+            ColumnList : []*tree.UnresolvedName{$3},
+        }
+
+    }
+    | CLUSTER BY '(' column_name_list ')'
+    {
+        $$ = &tree.ClusterByOption{
+            ColumnList : $4,
         }
     }
 
@@ -5627,10 +5630,6 @@ simple_expr:
     {
         $$ = $1
     }
-//|     function_call_json
-//    {
-//        $$ = $1
-//    }
 
 else_opt:
     {
@@ -7757,6 +7756,7 @@ non_reserved_keyword:
 |   BOOL
 |   CHAIN
 |   CHECKSUM
+|   CLUSTER
 |   COMPRESSION
 |   COMMENT_KEYWORD
 |   COMMIT
@@ -7932,8 +7932,6 @@ func_not_keyword:
 |   SUBDATE
 |   SYSTEM_USER
 |   TRANSLATE
-|   UNNEST
-|   GENERATE_SERIES
 
 not_keyword:
     ADDDATE
