@@ -339,12 +339,14 @@ func (builder *QueryBuilder) getJoinGraph(leaves []*plan.Node, conds []*plan.Exp
 		if node.NodeType == plan.Node_TABLE_SCAN {
 			binding := builder.ctxByNode[node.NodeId].bindingByTag[node.BindingTags[0]]
 			vertices[i].highNDVCols = GetHighNDVColumns(builder.compCtx.GetStatsCache().GetStatsInfoMap(node.TableDef.TblId), binding)
-			pkDef := builder.compCtx.GetPrimaryKeyDef(node.ObjRef.SchemaName, node.ObjRef.ObjName)
-			pks := make([]int32, len(pkDef))
-			for i, pk := range pkDef {
-				pks[i] = binding.FindColumn(pk.Name)
+			if node.TableDef.Pkey != nil {
+				pkNames := node.TableDef.Pkey.Names
+				pks := make([]int32, len(pkNames))
+				for i := range pkNames {
+					pks[i] = binding.FindColumn(pkNames[i])
+				}
+				vertices[i].pks = pks
 			}
-			vertices[i].pks = pks
 			tag2Vert[node.BindingTags[0]] = int32(i)
 		} else if len(node.BindingTags) > 0 {
 			for _, tag := range node.BindingTags {
