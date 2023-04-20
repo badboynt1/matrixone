@@ -220,6 +220,20 @@ func (mr *MockRelationMockRecorder) Delete(arg0, arg1, arg2 interface{}) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockRelation)(nil).Delete), arg0, arg1, arg2)
 }
 
+// GetEngineType mocks base method.
+func (m *MockRelation) GetEngineType() engine.EngineType {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetEngineType")
+	ret0, _ := ret[0].(engine.EngineType)
+	return ret0
+}
+
+// GetEngineType indicates an expected call of GetEngineType.
+func (mr *MockRelationMockRecorder) GetEngineType() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEngineType", reflect.TypeOf((*MockRelation)(nil).GetEngineType))
+}
+
 // GetHideKeys mocks base method.
 func (m *MockRelation) GetHideKeys(arg0 context.Context) ([]*engine.Attribute, error) {
 	m.ctrl.T.Helper()
@@ -264,6 +278,20 @@ func (mr *MockRelationMockRecorder) GetTableID(arg0 interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableID", reflect.TypeOf((*MockRelation)(nil).GetTableID), arg0)
 }
 
+// MarshalRanges mocks base method.
+func (m *MockRelation) MarshalRanges(arg0 any) [][]byte {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarshalRanges", arg0)
+	ret0, _ := ret[0].([][]byte)
+	return ret0
+}
+
+// MarshalRanges indicates an expected call of MarshalRanges.
+func (mr *MockRelationMockRecorder) MarshalRanges(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarshalRanges", reflect.TypeOf((*MockRelation)(nil).MarshalRanges), arg0)
+}
+
 // MaxAndMinValues mocks base method.
 func (m *MockRelation) MaxAndMinValues(ctx context.Context) ([][2]any, []uint8, error) {
 	m.ctrl.T.Helper()
@@ -296,10 +324,10 @@ func (mr *MockRelationMockRecorder) NewReader(arg0, arg1, arg2, arg3 interface{}
 }
 
 // Ranges mocks base method.
-func (m *MockRelation) Ranges(arg0 context.Context, arg1 *plan.Expr) ([][]byte, error) {
+func (m *MockRelation) Ranges(arg0 context.Context, arg1 *plan.Expr) (any, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Ranges", arg0, arg1)
-	ret0, _ := ret[0].([][]byte)
+	ret0, _ := ret[0].(any)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
