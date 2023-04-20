@@ -2081,7 +2081,7 @@ func hashBlocksToFixedCN(c *Compile, blocks []disttae.BlockMeta, rel engine.Rela
 
 	//to maxify locality, put blocks in the same s3 object in the same CN
 	lenCN := len(c.cnList)
-	for i, _ := range blocks {
+	for i := range blocks {
 		objName := blocks[i].Info.MetaLoc.Name()
 		index := plan2.SimpleHashToRange(objName, lenCN)
 		nodes[index].Data = append(nodes[index].Data, disttae.BlockMarshal(blocks[i]))
