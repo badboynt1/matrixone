@@ -729,10 +729,11 @@ func (s *Scope) CreateIndex(c *Compile) error {
 	indexDef := qry.GetIndex().GetTableDef().Indexes[0]
 	if indexDef.Unique {
 		targetAttrs := getIndexColsFromOriginTable(tblDefs, indexDef.Parts)
-		ret, err := r.Ranges(c.ctx, nil)
+		ranges, err := r.Ranges(c.ctx, nil)
 		if err != nil {
 			return err
 		}
+		ret := r.MarshalRanges(ranges)
 		rds, err := r.NewReader(c.ctx, 1, nil, ret)
 		if err != nil {
 			return err

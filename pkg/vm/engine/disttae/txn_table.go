@@ -178,8 +178,18 @@ func (tbl *txnTable) GetEngineType() engine.EngineType {
 	return engine.Disttae
 }
 
+func (tbl *txnTable) MarshalRanges(ranges any) [][]byte {
+	var ret [][]byte
+	blocks, _ := ranges.([]BlockMeta)
+	ret = append(ret, []byte{})
+	for i := range blocks {
+		ret = append(ret, BlockMarshal(blocks[i]))
+	}
+	return ret
+}
+
 // return all unmodified blocks
-func (tbl *txnTable) Ranges(ctx context.Context, expr *plan.Expr) ([][]byte, error) {
+func (tbl *txnTable) Ranges(ctx context.Context, expr *plan.Expr) (any, error) {
 	// if err := tbl.db.txn.DumpBatch(false, 0); err != nil {
 	// 	return nil, err
 	// }
@@ -203,7 +213,7 @@ func (tbl *txnTable) Ranges(ctx context.Context, expr *plan.Expr) ([][]byte, err
 	}
 	parts := tbl.getParts()
 
-	ranges := make([][]byte, 0)
+	ranges := make([]BlockMeta, 0)
 	tbl.skipBlocks = make(map[types.Blockid]uint8)
 	if tbl.meta == nil {
 		return ranges, nil
@@ -259,7 +269,7 @@ func (tbl *txnTable) Ranges(ctx context.Context, expr *plan.Expr) ([][]byte, err
 		for _, blk := range blks {
 			tbl.skipBlocks[blk.Info.BlockID] = 0
 			if !exprMono || needRead(ctx, expr, blk, tbl.getTableDef(), columnMap, columns, maxCol, tbl.db.txn.proc) {
-				ranges = append(ranges, blockMarshal(blk))
+				ranges = append(ranges, blk)
 			}
 		}
 		tbl.meta.modifedBlocks[i] = genModifedBlocks(ctx, deletes,

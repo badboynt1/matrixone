@@ -208,7 +208,11 @@ func (t *Table) GetEngineType() engine.EngineType {
 	return engine.Memory
 }
 
-func (t *Table) Ranges(ctx context.Context, _ *plan.Expr) ([][]byte, error) {
+func (t *Table) MarshalRanges(ranges any) [][]byte {
+	return ranges.([][]byte)
+}
+
+func (t *Table) Ranges(ctx context.Context, _ *plan.Expr) (any, error) {
 	// return encoded shard ids
 	nodes := getDNServices(t.engine.cluster)
 	shards := make([][]byte, 0, len(nodes))

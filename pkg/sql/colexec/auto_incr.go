@@ -442,10 +442,11 @@ func getCurrentIndex(param *AutoIncrParam, colName string, txn client.TxnOperato
 
 	expr := getRangeExpr(colName)
 	// use expression to get ranges
-	ret, err := rel.Ranges(param.ctx, expr)
+	ranges, err := rel.Ranges(param.ctx, expr)
 	if err != nil {
 		return 0, 0, nil, err
 	}
+	ret := rel.MarshalRanges(ranges)
 	switch {
 	case len(ret) == 0:
 		if rds, err = rel.NewReader(param.ctx, 1, expr, nil); err != nil {
@@ -548,10 +549,11 @@ func makeAutoIncrBatch(name string, num, step uint64, mp *mpool.MPool) *batch.Ba
 func GetDeleteBatch(rel engine.Relation, ctx context.Context, colName string, mp *mpool.MPool) (*batch.Batch, uint64) {
 	var rds []engine.Reader
 
-	ret, err := rel.Ranges(ctx, nil)
+	ranges, err := rel.Ranges(ctx, nil)
 	if err != nil {
 		panic(err)
 	}
+	ret := rel.MarshalRanges(ranges)
 	switch {
 	case len(ret) == 0:
 		rds, _ = rel.NewReader(ctx, 1, nil, nil)

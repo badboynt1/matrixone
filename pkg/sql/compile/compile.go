@@ -1884,7 +1884,7 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
 	var err error
 	var db engine.Database
 	var rel engine.Relation
-	var ranges [][]byte
+	var ranges any
 	var nodes engine.Nodes
 	isPartitionTable := false
 
@@ -1921,10 +1921,20 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
 		}
 	}
 
+	engineType := rel.GetEngineType()
 	expr, _ := plan2.HandleFiltersForZM(n.FilterList, c.proc)
 	ranges, err = rel.Ranges(ctx, expr)
 	if err != nil {
 		return nil, err
+	}
+
+	var blocks []disttae.BlockMeta
+	var shardIDs [][]byte
+
+	if engineType == engine.Disttae {
+		blocks, _ = ranges.([]disttae.BlockMeta)
+	} else if engineType == engine.Memory {
+		shardIDs, _ = ranges.([][]byte)
 	}
 
 	if n.TableDef.Partition != nil {
@@ -1942,17 +1952,13 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
 			if err != nil {
 				return nil, err
 			}
-			ranges = append(ranges, subranges...)
+			subBlocks, _ := subranges.([]disttae.BlockMeta)
+			blocks = append(blocks, subBlocks...)
 		}
 	}
 
-	// some log for finding a bug.
-	tblId := rel.GetTableID(ctx)
-	expectedLen := len(ranges)
-	logutil.Infof("cn generateNodes, tbl %d ranges is %d", tblId, expectedLen)
-
-	// If ranges == 0, dont know what type of table is this
-	if len(ranges) == 0 && n.TableDef.TableType != catalog.SystemOrdinaryRel {
+	// dont know what type of table is this
+	if len(blocks) == 0 && len(shardIDs) == 0 && n.TableDef.TableType != catalog.SystemOrdinaryRel {
 		nodes = make(engine.Nodes, len(c.cnList))
 		for i, node := range c.cnList {
 			if isPartitionTable {
@@ -1973,29 +1979,29 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
 		return nodes, nil
 	}
 
-	engineType := rel.GetEngineType()
 	if isPartitionTable {
 		rel = nil
 	}
+
 	// for multi cn in luanch mode, put all payloads in current CN
 	// maybe delete this in the future
 	if isLaunchMode(c.cnList) {
-		return putBlocksInCurrentCN(c, ranges, rel, n, engineType), nil
+		return putBlocksInCurrentCN(c, shardIDs, blocks, rel, n, engineType), nil
 	}
 	// disttae engine , hash s3 objects to fixed CN
 	if engineType == engine.Disttae {
-		return hashBlocksToFixedCN(c, ranges, rel, n), nil
+		return hashBlocksToFixedCN(c, blocks, rel, n), nil
 	}
 	// maybe temp table on memengine , just put payloads in average
-	return putBlocksInAverage(c, ranges, rel, n), nil
+	return putBlocksInAverage(c, shardIDs, rel, n), nil
 }
 
-func putBlocksInAverage(c *Compile, ranges [][]byte, rel engine.Relation, n *plan.Node) engine.Nodes {
+func putBlocksInAverage(c *Compile, shardIDs [][]byte, rel engine.Relation, n *plan.Node) engine.Nodes {
 	var nodes engine.Nodes
-	step := (len(ranges) + len(c.cnList) - 1) / len(c.cnList)
-	for i := 0; i < len(ranges); i += step {
+	step := (len(shardIDs) + len(c.cnList) - 1) / len(c.cnList)
+	for i := 0; i < len(shardIDs); i += step {
 		j := i / step
-		if i+step >= len(ranges) {
+		if i+step >= len(shardIDs) {
 			if isSameCN(c.cnList[j].Addr, c.addr) {
 				if len(nodes) == 0 {
 					nodes = append(nodes, engine.Node{
@@ -2004,14 +2010,14 @@ func putBlocksInAverage(c *Compile, ranges [][]byte, rel engine.Relation, n *pla
 						Mcpu: c.generateCPUNumber(c.NumCPU(), int(n.Stats.BlockNum)),
 					})
 				}
-				nodes[0].Data = append(nodes[0].Data, ranges[i:]...)
+				nodes[0].Data = append(nodes[0].Data, shardIDs[i:]...)
 			} else {
 				nodes = append(nodes, engine.Node{
 					Rel:  rel,
 					Id:   c.cnList[j].Id,
 					Addr: c.cnList[j].Addr,
 					Mcpu: c.generateCPUNumber(c.cnList[j].Mcpu, int(n.Stats.BlockNum)),
-					Data: ranges[i:],
+					Data: shardIDs[i:],
 				})
 			}
 		} else {
@@ -2023,14 +2029,14 @@ func putBlocksInAverage(c *Compile, ranges [][]byte, rel engine.Relation, n *pla
 						Mcpu: c.generateCPUNumber(c.NumCPU(), int(n.Stats.BlockNum)),
 					})
 				}
-				nodes[0].Data = append(nodes[0].Data, ranges[i:i+step]...)
+				nodes[0].Data = append(nodes[0].Data, shardIDs[i:i+step]...)
 			} else {
 				nodes = append(nodes, engine.Node{
 					Rel:  rel,
 					Id:   c.cnList[j].Id,
 					Addr: c.cnList[j].Addr,
 					Mcpu: c.generateCPUNumber(c.cnList[j].Mcpu, int(n.Stats.BlockNum)),
-					Data: ranges[i : i+step],
+					Data: shardIDs[i : i+step],
 				})
 			}
 		}
@@ -2038,7 +2044,7 @@ func putBlocksInAverage(c *Compile, ranges [][]byte, rel engine.Relation, n *pla
 	return nodes
 }
 
-func hashBlocksToFixedCN(c *Compile, ranges [][]byte, rel engine.Relation, n *plan.Node) engine.Nodes {
+func hashBlocksToFixedCN(c *Compile, blocks []disttae.BlockMeta, rel engine.Relation, n *plan.Node) engine.Nodes {
 	var nodes engine.Nodes
 	//add current CN
 	nodes = append(nodes, engine.Node{
@@ -2049,12 +2055,14 @@ func hashBlocksToFixedCN(c *Compile, ranges [][]byte, rel engine.Relation, n *pl
 	//add memory table block
 	nodes[0].Data = append(nodes[0].Data, []byte{})
 	// only memory table block
-	if len(ranges) == 0 {
+	if len(blocks) == 0 {
 		return nodes
 	}
 	//only one cn
 	if len(c.cnList) == 1 {
-		nodes[0].Data = append(nodes[0].Data, ranges...)
+		for i := range blocks {
+			nodes[0].Data = append(nodes[0].Data, disttae.BlockMarshal(blocks[i]))
+		}
 		return nodes
 	}
 	//add the rest of CNs in list
@@ -2073,11 +2081,10 @@ func hashBlocksToFixedCN(c *Compile, ranges [][]byte, rel engine.Relation, n *pl
 
 	//to maxify locality, put blocks in the same s3 object in the same CN
 	lenCN := len(c.cnList)
-	for i, blk := range ranges {
-		marshalledBlock := disttae.BlockUnmarshal(ranges[i])
-		objName := marshalledBlock.Info.MetaLoc.Name()
+	for i, _ := range blocks {
+		objName := blocks[i].Info.MetaLoc.Name()
 		index := plan2.SimpleHashToRange(objName, lenCN)
-		nodes[index].Data = append(nodes[index].Data, blk)
+		nodes[index].Data = append(nodes[index].Data, disttae.BlockMarshal(blocks[i]))
 	}
 	//remove empty node from nodes
 	var newNodes engine.Nodes
@@ -2089,7 +2096,7 @@ func hashBlocksToFixedCN(c *Compile, ranges [][]byte, rel engine.Relation, n *pl
 	return newNodes
 }
 
-func putBlocksInCurrentCN(c *Compile, ranges [][]byte, rel engine.Relation, n *plan.Node, engineType engine.EngineType) engine.Nodes {
+func putBlocksInCurrentCN(c *Compile, shardIDs [][]byte, blocks []disttae.BlockMeta, rel engine.Relation, n *plan.Node, engineType engine.EngineType) engine.Nodes {
 	var nodes engine.Nodes
 	//add current CN
 	nodes = append(nodes, engine.Node{
@@ -2100,8 +2107,12 @@ func putBlocksInCurrentCN(c *Compile, ranges [][]byte, rel engine.Relation, n *p
 	if engineType == engine.Disttae {
 		//add memory table block
 		nodes[0].Data = append(nodes[0].Data, []byte{})
+		for i := range blocks {
+			nodes[0].Data = append(nodes[0].Data, disttae.BlockMarshal(blocks[i]))
+		}
+	} else {
+		nodes[0].Data = append(nodes[0].Data, shardIDs...)
 	}
-	nodes[0].Data = append(nodes[0].Data, ranges...)
 	return nodes
 }
 

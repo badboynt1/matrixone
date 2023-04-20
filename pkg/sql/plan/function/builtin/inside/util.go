@@ -16,7 +16,6 @@ package inside
 
 import (
 	"context"
-
 	"github.com/matrixorigin/matrixone/pkg/catalog"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/container/vector"
@@ -80,10 +79,11 @@ func getTableAutoIncrValue(dbName string, colName string, eg engine.Engine, txn 
 		return 0, err
 	}
 	expr := getRangeExpr(colName)
-	ret, err := rel.Ranges(proc.Ctx, expr)
+	ranges, err := rel.Ranges(proc.Ctx, expr)
 	if err != nil {
 		return 0, err
 	}
+	ret := rel.MarshalRanges(ranges)
 	switch {
 	case len(ret) == 0:
 		if rds, err = rel.NewReader(proc.Ctx, 1, expr, nil); err != nil {

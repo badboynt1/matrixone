@@ -16,7 +16,7 @@ package disttae
 
 func init() {
 	//TODO for passing static check
-	_ = blockMarshal
+	_ = BlockMarshal
 	_ = genModifedBlocks
 	_ = needRead
 	_ = inBlockMap

@@ -339,7 +339,10 @@ func (*IndexDef) constraint()         {}
 type Relation interface {
 	Statistics
 
-	Ranges(context.Context, *plan.Expr) ([][]byte, error)
+	Ranges(context.Context, *plan.Expr) (any, error)
+
+	//will delete this soon
+	MarshalRanges(any) [][]byte
 
 	TableDefs(context.Context) ([]TableDef, error)
 

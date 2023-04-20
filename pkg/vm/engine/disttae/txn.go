@@ -362,7 +362,7 @@ func blockRows(meta BlockMeta) int64 {
 	return meta.Rows
 }
 
-func blockMarshal(meta BlockMeta) []byte {
+func BlockMarshal(meta BlockMeta) []byte {
 	data, _ := types.Encode(meta)
 	return data
 }

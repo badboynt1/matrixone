@@ -138,7 +138,7 @@ func TestBlockMetaMarshal(t *testing.T) {
 			// makeZonemapForTest(types.T_varchar, "a", "h"),
 		},
 	}
-	data := blockMarshal(meta)
+	data := BlockMarshal(meta)
 	meta0 := BlockUnmarshal(data)
 	require.Equal(t, meta, meta0)
 }

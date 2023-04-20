@@ -44,7 +44,11 @@ func (baseRelation) GetEngineType() engine.EngineType {
 	return engine.UNKNOWN
 }
 
-func (*baseRelation) Ranges(_ context.Context, _ *plan.Expr) ([][]byte, error) {
+func (*baseRelation) MarshalRanges(ranges any) [][]byte {
+	return nil
+}
+
+func (*baseRelation) Ranges(_ context.Context, _ *plan.Expr) (any, error) {
 	return nil, nil
 }
 
