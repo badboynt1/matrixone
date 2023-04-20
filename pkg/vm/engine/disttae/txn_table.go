@@ -179,7 +179,7 @@ func (tbl *txnTable) GetEngineType() engine.EngineType {
 }
 
 func (tbl *txnTable) MarshalRanges(ranges any) [][]byte {
-	var ret [][]byte
+	ret := make([][]byte, 0)
 	blocks, _ := ranges.([]BlockMeta)
 	ret = append(ret, []byte{})
 	for i := range blocks {
