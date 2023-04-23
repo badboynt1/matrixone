@@ -76,7 +76,7 @@ type Relation interface {
 	GetRelationID(context.Context) uint64
 	//just for test
 	// second argument is the number of reader, third argument is the filter extend, foruth parameter is the payload required by the engine
-	NewReader(context.Context, int, *plan.Expr, [][]byte) ([]engine.Reader, error)
+	NewReader(context.Context, int, *plan.Expr, []string, [][]byte) ([]engine.Reader, error)
 }
 
 // Database is only used by taeStorage

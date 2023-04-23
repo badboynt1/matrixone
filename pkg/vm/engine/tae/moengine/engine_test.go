@@ -143,7 +143,7 @@ func TestEngine(t *testing.T) {
 	assert.Nil(t, err)
 	rel, err = dbase.Relation(ctx, schema.Name)
 	assert.Nil(t, err)
-	readers, _ := rel.NewReader(ctx, 10, nil, nil)
+	readers, _ := rel.NewReader(ctx, 10, nil, nil, nil)
 	m := mpool.MustNewZero()
 	for _, reader := range readers {
 		bat, err := reader.Read(ctx, []string{schema.ColDefs[1].Name}, nil, m, nil)
@@ -252,7 +252,7 @@ func TestEngineAllType(t *testing.T) {
 	assert.Nil(t, err)
 	//rows, err := rel.Rows(ctx)
 	assert.Nil(t, err)
-	readers, _ := rel.NewReader(ctx, 10, nil, nil)
+	readers, _ := rel.NewReader(ctx, 10, nil, nil, nil)
 	m := mpool.MustNewZero()
 	for _, reader := range readers {
 		bat, err := reader.Read(ctx, schema.Attrs(), nil, m, nil)
@@ -324,7 +324,7 @@ func TestTxnRelation_GetHideKey(t *testing.T) {
 	rel, err = dbase.Relation(ctx, schema.Name)
 	assert.Nil(t, err)
 	assert.Nil(t, txn.Commit())
-	readers, _ := rel.NewReader(ctx, 10, nil, nil)
+	readers, _ := rel.NewReader(ctx, 10, nil, nil, nil)
 	delete := mobat.New(true, bat.Attrs)
 	m := mpool.MustNewZero()
 	for _, reader := range readers {
@@ -357,7 +357,7 @@ func TestTxnRelation_GetHideKey(t *testing.T) {
 	rel, err = dbase.Relation(ctx, schema.Name)
 	assert.Nil(t, err)
 	assert.Nil(t, txn.Commit())
-	readers, _ = rel.NewReader(ctx, 1, nil, nil)
+	readers, _ = rel.NewReader(ctx, 1, nil, nil, nil)
 	m = mpool.MustNewZero()
 	for _, reader := range readers {
 		bat, err := reader.Read(ctx, []string{schema.ColDefs[13].Name}, nil, m, nil)

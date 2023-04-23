@@ -37,6 +37,11 @@ import (
 )
 
 const (
+	PREFETCH_THRESHOLD = 128
+	PREFETCH_ROUNDS    = 16
+)
+
+const (
 	INSERT = iota
 	DELETE
 	UPDATE

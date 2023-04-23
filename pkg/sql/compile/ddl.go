@@ -734,7 +734,7 @@ func (s *Scope) CreateIndex(c *Compile) error {
 		if err != nil {
 			return err
 		}
-		rds, err := r.NewReader(c.ctx, 1, nil, ret)
+		rds, err := r.NewReader(c.ctx, 1, nil, nil, ret)
 		if err != nil {
 			return err
 		}

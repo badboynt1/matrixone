@@ -46,6 +46,7 @@ func (t *Table) NewReader(
 	ctx context.Context,
 	parallel int,
 	expr *plan.Expr,
+	colNames []string,
 	shardIDs [][]byte,
 ) (
 	readers []engine.Reader,

@@ -196,7 +196,7 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 	case s.NodeInfo.Rel != nil:
 		var err error
 
-		if rds, err = s.NodeInfo.Rel.NewReader(c.ctx, mcpu, s.DataSource.Expr, s.NodeInfo.Data); err != nil {
+		if rds, err = s.NodeInfo.Rel.NewReader(c.ctx, mcpu, s.DataSource.Expr, s.DataSource.Attributes, s.NodeInfo.Data); err != nil {
 			return err
 		}
 		s.NodeInfo.Data = nil
@@ -225,7 +225,7 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 				return err
 			}
 		}
-		if mainRds, err := rel.NewReader(ctx, mcpu, s.DataSource.Expr, s.NodeInfo.Data); err != nil {
+		if mainRds, err := rel.NewReader(ctx, mcpu, s.DataSource.Expr, s.DataSource.Attributes, s.NodeInfo.Data); err != nil {
 			return err
 		} else {
 			rds = append(rds, mainRds...)
@@ -238,7 +238,7 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 				if err != nil {
 					return err
 				}
-				memRds, err := subrel.NewReader(c.ctx, mcpu, s.DataSource.Expr, nil)
+				memRds, err := subrel.NewReader(c.ctx, mcpu, s.DataSource.Expr, s.DataSource.Attributes, nil)
 				if err != nil {
 					return err
 				}

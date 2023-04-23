@@ -501,7 +501,7 @@ func (tbl *txnTable) GetTableID(ctx context.Context) uint64 {
 	return tbl.tableId
 }
 
-func (tbl *txnTable) NewReader(ctx context.Context, num int, expr *plan.Expr, ranges [][]byte) ([]engine.Reader, error) {
+func (tbl *txnTable) NewReader(ctx context.Context, num int, expr *plan.Expr, colNames []string, ranges [][]byte) ([]engine.Reader, error) {
 	if len(ranges) == 0 {
 		return tbl.newMergeReader(ctx, num, expr)
 	}

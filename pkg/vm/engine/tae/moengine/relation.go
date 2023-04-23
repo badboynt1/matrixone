@@ -140,7 +140,7 @@ func (rel *baseRelation) Delete(_ context.Context, _ *batch.Batch, _ string) err
 	return nil
 }
 
-func (rel *baseRelation) NewReader(_ context.Context, num int, _ *plan.Expr, _ [][]byte) ([]engine.Reader, error) {
+func (rel *baseRelation) NewReader(_ context.Context, num int, _ *plan.Expr, _ []string, _ [][]byte) ([]engine.Reader, error) {
 	var rds []engine.Reader
 
 	it := rel.handle.MakeBlockIt()

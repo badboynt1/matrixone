@@ -153,7 +153,7 @@ func main() {
 		}
 
 		parallel := 10
-		readers, err := rel.NewReader(ctx, parallel, nil, nil)
+		readers, err := rel.NewReader(ctx, parallel, nil, nil, nil)
 		if err != nil {
 			panic(err)
 		}

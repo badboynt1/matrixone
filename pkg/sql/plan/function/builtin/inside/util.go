@@ -86,26 +86,26 @@ func getTableAutoIncrValue(dbName string, colName string, eg engine.Engine, txn 
 	}
 	switch {
 	case len(ret) == 0:
-		if rds, err = rel.NewReader(proc.Ctx, 1, expr, nil); err != nil {
+		if rds, err = rel.NewReader(proc.Ctx, 1, expr, nil, nil); err != nil {
 			return 0, err
 		}
 	case len(ret) == 1 && len(ret[0]) == 0:
-		if rds, err = rel.NewReader(proc.Ctx, 1, expr, nil); err != nil {
+		if rds, err = rel.NewReader(proc.Ctx, 1, expr, nil, nil); err != nil {
 			return 0, err
 		}
 	case len(ret[0]) == 0:
-		rds0, err := rel.NewReader(proc.Ctx, 1, expr, nil)
+		rds0, err := rel.NewReader(proc.Ctx, 1, expr, nil, nil)
 		if err != nil {
 			return 0, err
 		}
-		rds1, err := rel.NewReader(proc.Ctx, 1, expr, ret[1:])
+		rds1, err := rel.NewReader(proc.Ctx, 1, expr, nil, ret[1:])
 		if err != nil {
 			return 0, err
 		}
 		rds = append(rds, rds0...)
 		rds = append(rds, rds1...)
 	default:
-		rds, _ = rel.NewReader(proc.Ctx, 1, expr, ret)
+		rds, _ = rel.NewReader(proc.Ctx, 1, expr, nil, ret)
 	}
 	for len(rds) > 0 {
 		bat, err := rds[0].Read(proc.Ctx, catalog.AutoIncrColumnNames, expr, proc.Mp(), nil)

@@ -448,26 +448,26 @@ func getCurrentIndex(param *AutoIncrParam, colName string, txn client.TxnOperato
 	}
 	switch {
 	case len(ret) == 0:
-		if rds, err = rel.NewReader(param.ctx, 1, expr, nil); err != nil {
+		if rds, err = rel.NewReader(param.ctx, 1, expr, nil, nil); err != nil {
 			return 0, 0, nil, err
 		}
 	case len(ret) == 1 && len(ret[0]) == 0:
-		if rds, err = rel.NewReader(param.ctx, 1, expr, nil); err != nil {
+		if rds, err = rel.NewReader(param.ctx, 1, expr, nil, nil); err != nil {
 			return 0, 0, nil, err
 		}
 	case len(ret[0]) == 0:
-		rds0, err := rel.NewReader(param.ctx, 1, expr, nil)
+		rds0, err := rel.NewReader(param.ctx, 1, expr, nil, nil)
 		if err != nil {
 			return 0, 0, nil, err
 		}
-		rds1, err := rel.NewReader(param.ctx, 1, expr, ret[1:])
+		rds1, err := rel.NewReader(param.ctx, 1, expr, nil, ret[1:])
 		if err != nil {
 			return 0, 0, nil, err
 		}
 		rds = append(rds, rds0...)
 		rds = append(rds, rds1...)
 	default:
-		rds, _ = rel.NewReader(param.ctx, 1, expr, ret)
+		rds, _ = rel.NewReader(param.ctx, 1, expr, nil, ret)
 	}
 
 	for len(rds) > 0 {
@@ -554,16 +554,16 @@ func GetDeleteBatch(rel engine.Relation, ctx context.Context, colName string, mp
 	}
 	switch {
 	case len(ret) == 0:
-		rds, _ = rel.NewReader(ctx, 1, nil, nil)
+		rds, _ = rel.NewReader(ctx, 1, nil, nil, nil)
 	case len(ret) == 1 && len(ret[0]) == 0:
-		rds, _ = rel.NewReader(ctx, 1, nil, nil)
+		rds, _ = rel.NewReader(ctx, 1, nil, nil, nil)
 	case len(ret[0]) == 0:
-		rds0, _ := rel.NewReader(ctx, 1, nil, nil)
-		rds1, _ := rel.NewReader(ctx, 1, nil, ret[1:])
+		rds0, _ := rel.NewReader(ctx, 1, nil, nil, nil)
+		rds1, _ := rel.NewReader(ctx, 1, nil, nil, ret[1:])
 		rds = append(rds, rds0...)
 		rds = append(rds, rds1...)
 	default:
-		rds, _ = rel.NewReader(ctx, 1, nil, ret)
+		rds, _ = rel.NewReader(ctx, 1, nil, nil, ret)
 	}
 
 	retbat := batch.NewWithSize(1)
