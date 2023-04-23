@@ -518,7 +518,7 @@ func (tbl *txnTable) NewReader(ctx context.Context, num int, expr *plan.Expr, co
 		for i := range rds0 {
 			mrds[i].rds = append(mrds[i].rds, rds0[i])
 		}
-		rds0, err = tbl.newBlockReader(ctx, num, expr, ranges[1:])
+		rds0, err = tbl.newBlockReader(ctx, num, expr, colNames, ranges[1:])
 		if err != nil {
 			return nil, err
 		}
@@ -530,7 +530,7 @@ func (tbl *txnTable) NewReader(ctx context.Context, num int, expr *plan.Expr, co
 		}
 		return rds, nil
 	}
-	return tbl.newBlockReader(ctx, num, expr, ranges)
+	return tbl.newBlockReader(ctx, num, expr, colNames, ranges)
 }
 
 func (tbl *txnTable) newMergeReader(ctx context.Context, num int,
@@ -576,9 +576,9 @@ func (tbl *txnTable) newMergeReader(ctx context.Context, num int,
 	return rds, nil
 }
 
-func (tbl *txnTable) newBlockReader(ctx context.Context, num int, expr *plan.Expr, ranges [][]byte) ([]engine.Reader, error) {
+func (tbl *txnTable) newBlockReader(ctx context.Context, num int, expr *plan.Expr, colNames []string, ranges [][]byte) ([]engine.Reader, error) {
 	rds := make([]engine.Reader, num)
-	blks := make([]catalog.BlockInfo, len(ranges))
+	blks := make([]*catalog.BlockInfo, len(ranges))
 	for i := range ranges {
 		blks[i] = BlockInfoUnmarshal(ranges[i])
 	}
@@ -594,7 +594,7 @@ func (tbl *txnTable) newBlockReader(ctx context.Context, num int, expr *plan.Exp
 				expr:       expr,
 				ts:         ts,
 				ctx:        ctx,
-				blks:       []catalog.BlockInfo{blks[i]},
+				blks:       []*catalog.BlockInfo{blks[i]},
 			}
 		}
 		for j := len(ranges); j < num; j++ {

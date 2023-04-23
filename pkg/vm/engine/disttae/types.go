@@ -242,7 +242,7 @@ type column struct {
 }
 
 type blockReader struct {
-	blks       []catalog.BlockInfo
+	blks       []*catalog.BlockInfo
 	ctx        context.Context
 	fs         fileservice.FileService
 	ts         timestamp.Timestamp
