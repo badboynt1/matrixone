@@ -102,6 +102,232 @@ func (mr *MockTxnClientMockRecorder) NewWithSnapshot(snapshot interface{}) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewWithSnapshot", reflect.TypeOf((*MockTxnClient)(nil).NewWithSnapshot), snapshot)
 }
 
+// MockTxnClientWithCtl is a mock of TxnClientWithCtl interface.
+type MockTxnClientWithCtl struct {
+	ctrl     *gomock.Controller
+	recorder *MockTxnClientWithCtlMockRecorder
+}
+
+// MockTxnClientWithCtlMockRecorder is the mock recorder for MockTxnClientWithCtl.
+type MockTxnClientWithCtlMockRecorder struct {
+	mock *MockTxnClientWithCtl
+}
+
+// NewMockTxnClientWithCtl creates a new mock instance.
+func NewMockTxnClientWithCtl(ctrl *gomock.Controller) *MockTxnClientWithCtl {
+	mock := &MockTxnClientWithCtl{ctrl: ctrl}
+	mock.recorder = &MockTxnClientWithCtlMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockTxnClientWithCtl) EXPECT() *MockTxnClientWithCtlMockRecorder {
+	return m.recorder
+}
+
+// Close mocks base method.
+func (m *MockTxnClientWithCtl) Close() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Close")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockTxnClientWithCtlMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockTxnClientWithCtl)(nil).Close))
+}
+
+// GetLatestCommitTS mocks base method.
+func (m *MockTxnClientWithCtl) GetLatestCommitTS() timestamp.Timestamp {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetLatestCommitTS")
+	ret0, _ := ret[0].(timestamp.Timestamp)
+	return ret0
+}
+
+// GetLatestCommitTS indicates an expected call of GetLatestCommitTS.
+func (mr *MockTxnClientWithCtlMockRecorder) GetLatestCommitTS() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLatestCommitTS", reflect.TypeOf((*MockTxnClientWithCtl)(nil).GetLatestCommitTS))
+}
+
+// MinTimestamp mocks base method.
+func (m *MockTxnClientWithCtl) MinTimestamp() timestamp.Timestamp {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MinTimestamp")
+	ret0, _ := ret[0].(timestamp.Timestamp)
+	return ret0
+}
+
+// MinTimestamp indicates an expected call of MinTimestamp.
+func (mr *MockTxnClientWithCtlMockRecorder) MinTimestamp() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MinTimestamp", reflect.TypeOf((*MockTxnClientWithCtl)(nil).MinTimestamp))
+}
+
+// New mocks base method.
+func (m *MockTxnClientWithCtl) New(ctx context.Context, commitTS timestamp.Timestamp, options ...client.TxnOption) (client.TxnOperator, error) {
+	m.ctrl.T.Helper()
+	varargs := []interface{}{ctx, commitTS}
+	for _, a := range options {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "New", varargs...)
+	ret0, _ := ret[0].(client.TxnOperator)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// New indicates an expected call of New.
+func (mr *MockTxnClientWithCtlMockRecorder) New(ctx, commitTS interface{}, options ...interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]interface{}{ctx, commitTS}, options...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "New", reflect.TypeOf((*MockTxnClientWithCtl)(nil).New), varargs...)
+}
+
+// NewWithSnapshot mocks base method.
+func (m *MockTxnClientWithCtl) NewWithSnapshot(snapshot []byte) (client.TxnOperator, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "NewWithSnapshot", snapshot)
+	ret0, _ := ret[0].(client.TxnOperator)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// NewWithSnapshot indicates an expected call of NewWithSnapshot.
+func (mr *MockTxnClientWithCtlMockRecorder) NewWithSnapshot(snapshot interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewWithSnapshot", reflect.TypeOf((*MockTxnClientWithCtl)(nil).NewWithSnapshot), snapshot)
+}
+
+// SetLatestCommitTS mocks base method.
+func (m *MockTxnClientWithCtl) SetLatestCommitTS(arg0 timestamp.Timestamp) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetLatestCommitTS", arg0)
+}
+
+// SetLatestCommitTS indicates an expected call of SetLatestCommitTS.
+func (mr *MockTxnClientWithCtlMockRecorder) SetLatestCommitTS(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetLatestCommitTS", reflect.TypeOf((*MockTxnClientWithCtl)(nil).SetLatestCommitTS), arg0)
+}
+
+// MockTxnClientWithFeature is a mock of TxnClientWithFeature interface.
+type MockTxnClientWithFeature struct {
+	ctrl     *gomock.Controller
+	recorder *MockTxnClientWithFeatureMockRecorder
+}
+
+// MockTxnClientWithFeatureMockRecorder is the mock recorder for MockTxnClientWithFeature.
+type MockTxnClientWithFeatureMockRecorder struct {
+	mock *MockTxnClientWithFeature
+}
+
+// NewMockTxnClientWithFeature creates a new mock instance.
+func NewMockTxnClientWithFeature(ctrl *gomock.Controller) *MockTxnClientWithFeature {
+	mock := &MockTxnClientWithFeature{ctrl: ctrl}
+	mock.recorder = &MockTxnClientWithFeatureMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockTxnClientWithFeature) EXPECT() *MockTxnClientWithFeatureMockRecorder {
+	return m.recorder
+}
+
+// CNBasedConsistencyEnabled mocks base method.
+func (m *MockTxnClientWithFeature) CNBasedConsistencyEnabled() bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CNBasedConsistencyEnabled")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// CNBasedConsistencyEnabled indicates an expected call of CNBasedConsistencyEnabled.
+func (mr *MockTxnClientWithFeatureMockRecorder) CNBasedConsistencyEnabled() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CNBasedConsistencyEnabled", reflect.TypeOf((*MockTxnClientWithFeature)(nil).CNBasedConsistencyEnabled))
+}
+
+// Close mocks base method.
+func (m *MockTxnClientWithFeature) Close() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Close")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockTxnClientWithFeatureMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockTxnClientWithFeature)(nil).Close))
+}
+
+// MinTimestamp mocks base method.
+func (m *MockTxnClientWithFeature) MinTimestamp() timestamp.Timestamp {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MinTimestamp")
+	ret0, _ := ret[0].(timestamp.Timestamp)
+	return ret0
+}
+
+// MinTimestamp indicates an expected call of MinTimestamp.
+func (mr *MockTxnClientWithFeatureMockRecorder) MinTimestamp() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MinTimestamp", reflect.TypeOf((*MockTxnClientWithFeature)(nil).MinTimestamp))
+}
+
+// New mocks base method.
+func (m *MockTxnClientWithFeature) New(ctx context.Context, commitTS timestamp.Timestamp, options ...client.TxnOption) (client.TxnOperator, error) {
+	m.ctrl.T.Helper()
+	varargs := []interface{}{ctx, commitTS}
+	for _, a := range options {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "New", varargs...)
+	ret0, _ := ret[0].(client.TxnOperator)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// New indicates an expected call of New.
+func (mr *MockTxnClientWithFeatureMockRecorder) New(ctx, commitTS interface{}, options ...interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]interface{}{ctx, commitTS}, options...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "New", reflect.TypeOf((*MockTxnClientWithFeature)(nil).New), varargs...)
+}
+
+// NewWithSnapshot mocks base method.
+func (m *MockTxnClientWithFeature) NewWithSnapshot(snapshot []byte) (client.TxnOperator, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "NewWithSnapshot", snapshot)
+	ret0, _ := ret[0].(client.TxnOperator)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// NewWithSnapshot indicates an expected call of NewWithSnapshot.
+func (mr *MockTxnClientWithFeatureMockRecorder) NewWithSnapshot(snapshot interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewWithSnapshot", reflect.TypeOf((*MockTxnClientWithFeature)(nil).NewWithSnapshot), snapshot)
+}
+
+// RefreshExpressionEnabled mocks base method.
+func (m *MockTxnClientWithFeature) RefreshExpressionEnabled() bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RefreshExpressionEnabled")
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// RefreshExpressionEnabled indicates an expected call of RefreshExpressionEnabled.
+func (mr *MockTxnClientWithFeatureMockRecorder) RefreshExpressionEnabled() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshExpressionEnabled", reflect.TypeOf((*MockTxnClientWithFeature)(nil).RefreshExpressionEnabled))
+}
+
 // MockTxnOperator is a mock of TxnOperator interface.
 type MockTxnOperator struct {
 	ctrl     *gomock.Controller
