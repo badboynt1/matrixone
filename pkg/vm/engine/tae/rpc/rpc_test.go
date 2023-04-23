@@ -425,7 +425,7 @@ func TestHandle_HandlePreCommitWriteS3(t *testing.T) {
 	assert.NoError(t, err)
 	hideDef, err := tbHandle.GetHideKeys(context.TODO())
 	assert.NoError(t, err)
-	blkReaders, _ := tbHandle.NewReader(context.TODO(), 1, nil, nil)
+	blkReaders, _ := tbHandle.NewReader(context.TODO(), 1, nil, nil, nil)
 	rows := 0
 	var hideBats []*batch.Batch
 	for i := 0; i < len(taeBats); i++ {
@@ -443,7 +443,7 @@ func TestHandle_HandlePreCommitWriteS3(t *testing.T) {
 	assert.Equal(t, taeBat.Length(), rows)
 
 	//read physical addr column
-	blkReaders, _ = tbHandle.NewReader(context.TODO(), 1, nil, nil)
+	blkReaders, _ = tbHandle.NewReader(context.TODO(), 1, nil, nil, nil)
 	for i := 0; i < len(taeBats); i++ {
 		hideBat, err := blkReaders[0].Read(
 			context.TODO(),
@@ -544,7 +544,7 @@ func TestHandle_HandlePreCommitWriteS3(t *testing.T) {
 	assert.NoError(t, err)
 	tbHandle, err = dbHandle.GetRelation(context.TODO(), schema.Name)
 	assert.NoError(t, err)
-	blkReaders, _ = tbHandle.NewReader(context.TODO(), 1, nil, nil)
+	blkReaders, _ = tbHandle.NewReader(context.TODO(), 1, nil, nil, nil)
 	rows = 0
 	for i := 0; i < len(taeBats); i++ {
 		//read primary key column
@@ -733,7 +733,7 @@ func TestHandle_HandlePreCommit1PC(t *testing.T) {
 	assert.NoError(t, err)
 	tbHandle, err = dbHandle.GetRelation(ctx, schema.Name)
 	assert.NoError(t, err)
-	tbReaders, _ := tbHandle.NewReader(ctx, 1, nil, nil)
+	tbReaders, _ := tbHandle.NewReader(ctx, 1, nil, nil, nil)
 	for _, reader := range tbReaders {
 		bat, err := reader.Read(ctx, []string{schema.ColDefs[1].Name}, nil, handle.m, nil)
 		assert.Nil(t, err)
@@ -745,7 +745,7 @@ func TestHandle_HandlePreCommit1PC(t *testing.T) {
 	// read row ids
 	hideCol, err := tbHandle.GetHideKeys(ctx)
 	assert.NoError(t, err)
-	reader, _ := tbHandle.NewReader(ctx, 1, nil, nil)
+	reader, _ := tbHandle.NewReader(ctx, 1, nil, nil, nil)
 	hideBat, err := reader[0].Read(ctx, []string{hideCol[0].Name}, nil, handle.m, nil)
 	assert.Nil(t, err)
 	err = txn.Commit()
@@ -784,7 +784,7 @@ func TestHandle_HandlePreCommit1PC(t *testing.T) {
 	assert.NoError(t, err)
 	tbHandle, err = dbHandle.GetRelation(ctx, schema.Name)
 	assert.NoError(t, err)
-	tbReaders, _ = tbHandle.NewReader(ctx, 2, nil, nil)
+	tbReaders, _ = tbHandle.NewReader(ctx, 2, nil, nil, nil)
 	for _, reader := range tbReaders {
 		bat, err := reader.Read(ctx, []string{schema.ColDefs[1].Name}, nil, handle.m, nil)
 		assert.Nil(t, err)
@@ -988,7 +988,7 @@ func TestHandle_HandlePreCommit2PCForCoordinator(t *testing.T) {
 	assert.NoError(t, err)
 	tbHandle, err = dbHandle.GetRelation(ctx, schema.Name)
 	assert.NoError(t, err)
-	tbReaders, _ := tbHandle.NewReader(ctx, 1, nil, nil)
+	tbReaders, _ := tbHandle.NewReader(ctx, 1, nil, nil, nil)
 	for _, reader := range tbReaders {
 		bat, err := reader.Read(ctx, []string{schema.ColDefs[1].Name}, nil, handle.m, nil)
 		assert.Nil(t, err)
@@ -1000,7 +1000,7 @@ func TestHandle_HandlePreCommit2PCForCoordinator(t *testing.T) {
 	// read row ids
 	hideCol, err := tbHandle.GetHideKeys(ctx)
 	assert.NoError(t, err)
-	reader, _ := tbHandle.NewReader(ctx, 1, nil, nil)
+	reader, _ := tbHandle.NewReader(ctx, 1, nil, nil, nil)
 	hideBat, err := reader[0].Read(ctx, []string{hideCol[0].Name}, nil, handle.m, nil)
 	assert.Nil(t, err)
 	err = txn.Commit()
@@ -1071,7 +1071,7 @@ func TestHandle_HandlePreCommit2PCForCoordinator(t *testing.T) {
 	assert.NoError(t, err)
 	tbHandle, err = dbHandle.GetRelation(ctx, schema.Name)
 	assert.NoError(t, err)
-	tbReaders, _ = tbHandle.NewReader(ctx, 2, nil, nil)
+	tbReaders, _ = tbHandle.NewReader(ctx, 2, nil, nil, nil)
 	for _, reader := range tbReaders {
 		bat, err := reader.Read(ctx, []string{schema.ColDefs[1].Name}, nil, handle.m, nil)
 		assert.Nil(t, err)
@@ -1295,7 +1295,7 @@ func TestHandle_HandlePreCommit2PCForParticipant(t *testing.T) {
 	assert.NoError(t, err)
 	tbHandle, err = dbHandle.GetRelation(ctx, schema.Name)
 	assert.NoError(t, err)
-	tbReaders, _ := tbHandle.NewReader(ctx, 1, nil, nil)
+	tbReaders, _ := tbHandle.NewReader(ctx, 1, nil, nil, nil)
 	for _, reader := range tbReaders {
 		bat, err := reader.Read(ctx, []string{schema.ColDefs[1].Name}, nil, handle.m, nil)
 		assert.Nil(t, err)
@@ -1307,7 +1307,7 @@ func TestHandle_HandlePreCommit2PCForParticipant(t *testing.T) {
 	// read row ids
 	hideCol, err := tbHandle.GetHideKeys(ctx)
 	assert.NoError(t, err)
-	reader, _ := tbHandle.NewReader(ctx, 1, nil, nil)
+	reader, _ := tbHandle.NewReader(ctx, 1, nil, nil, nil)
 	hideBat, err := reader[0].Read(ctx, []string{hideCol[0].Name}, nil, handle.m, nil)
 	assert.Nil(t, err)
 	err = txn.Commit()
@@ -1379,7 +1379,7 @@ func TestHandle_HandlePreCommit2PCForParticipant(t *testing.T) {
 	assert.NoError(t, err)
 	tbHandle, err = dbHandle.GetRelation(ctx, schema.Name)
 	assert.NoError(t, err)
-	tbReaders, _ = tbHandle.NewReader(ctx, 2, nil, nil)
+	tbReaders, _ = tbHandle.NewReader(ctx, 2, nil, nil, nil)
 	for _, reader := range tbReaders {
 		bat, err := reader.Read(ctx, []string{schema.ColDefs[1].Name}, nil, handle.m, nil)
 		assert.Nil(t, err)
@@ -1609,7 +1609,7 @@ func TestHandle_MVCCVisibility(t *testing.T) {
 		assert.NoError(t, err)
 		tbHandle, err := dbHandle.GetRelation(ctx, schema.Name)
 		assert.NoError(t, err)
-		tbReaders, _ := tbHandle.NewReader(ctx, 1, nil, nil)
+		tbReaders, _ := tbHandle.NewReader(ctx, 1, nil, nil, nil)
 		for _, reader := range tbReaders {
 			bat, err := reader.Read(ctx, []string{schema.ColDefs[1].Name}, nil, handle.m, nil)
 			assert.Nil(t, err)
@@ -1644,7 +1644,7 @@ func TestHandle_MVCCVisibility(t *testing.T) {
 		assert.NoError(t, err)
 		hideCol, err := tbHandle.GetHideKeys(ctx)
 		assert.NoError(t, err)
-		reader, _ := tbHandle.NewReader(ctx, 1, nil, nil)
+		reader, _ := tbHandle.NewReader(ctx, 1, nil, nil, nil)
 		hideBat, err = reader[0].Read(ctx, []string{hideCol[0].Name}, nil, handle.m, nil)
 		assert.Nil(t, err)
 		err = txn.Commit()
@@ -1690,7 +1690,7 @@ func TestHandle_MVCCVisibility(t *testing.T) {
 		assert.NoError(t, err)
 		tbHandle, err := dbHandle.GetRelation(ctx, schema.Name)
 		assert.NoError(t, err)
-		tbReaders, _ := tbHandle.NewReader(ctx, 2, nil, nil)
+		tbReaders, _ := tbHandle.NewReader(ctx, 2, nil, nil, nil)
 		for _, reader := range tbReaders {
 			bat, err := reader.Read(ctx, []string{schema.ColDefs[1].Name}, nil, handle.m, nil)
 			assert.Nil(t, err)

@@ -81,7 +81,7 @@ func TestInsertIndexMetadata(t *testing.T) {
 	}).AnyTimes()
 	reader.EXPECT().Close().Return(nil).AnyTimes()
 
-	indexes_relation.EXPECT().NewReader(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]engine.Reader{reader}, nil).AnyTimes()
+	indexes_relation.EXPECT().NewReader(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]engine.Reader{reader}, nil).AnyTimes()
 	catalog_database.EXPECT().Relation(gomock.Any(), catalog.MO_INDEXES).Return(indexes_relation, nil).AnyTimes()
 	//---------------------------------------------------------------------------------------------------------------------------
 	mock_emp_Relation := mock_frontend.NewMockRelation(ctrl)
@@ -175,7 +175,7 @@ func TestInsertOneIndexMetadata(t *testing.T) {
 	}).AnyTimes()
 	reader.EXPECT().Close().Return(nil).AnyTimes()
 
-	indexes_relation.EXPECT().NewReader(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]engine.Reader{reader}, nil).AnyTimes()
+	indexes_relation.EXPECT().NewReader(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return([]engine.Reader{reader}, nil).AnyTimes()
 	catalog_database.EXPECT().Relation(gomock.Any(), catalog.MO_INDEXES).Return(indexes_relation, nil).AnyTimes()
 	//---------------------------------------------------------------------------------------------------------------------------
 
