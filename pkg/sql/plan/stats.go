@@ -730,9 +730,6 @@ func DefaultStats() *plan.Stats {
 	return stats
 }
 
-// If the RHS cardinality is larger than the LHS by this ratio, we build on left and probe on right
-const kLeftRightRatio = 1
-
 func (builder *QueryBuilder) applySwapRuleByStats(nodeID int32, recursive bool) {
 	node := builder.qry.Nodes[nodeID]
 	if recursive && len(node.Children) > 0 {
@@ -759,7 +756,7 @@ func (builder *QueryBuilder) applySwapRuleByStats(nodeID int32, recursive bool) 
 
 	case plan.Node_LEFT, plan.Node_SEMI, plan.Node_ANTI:
 		//right joins does not support non equal join for now
-		if IsEquiJoin(node.OnList) && leftChild.Stats.Outcnt*kLeftRightRatio < rightChild.Stats.Outcnt {
+		if IsEquiJoin(node.OnList) && leftChild.Stats.Outcnt < rightChild.Stats.Outcnt {
 			node.BuildOnLeft = true
 		}
 	}
