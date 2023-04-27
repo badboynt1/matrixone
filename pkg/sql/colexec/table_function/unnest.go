@@ -114,6 +114,9 @@ func unnestCall(_ int, proc *process.Process, arg *Argument) (bool, error) {
 	if bat == nil {
 		return true, nil
 	}
+	if len(bat.Zs) == 0 {
+		return false, nil
+	}
 	jsonVec, err = colexec.EvalExpr(bat, proc, arg.Args[0])
 	if err != nil {
 		return false, err
@@ -168,7 +171,8 @@ func handle(jsonVec *vector.Vector, path *bytejson.Path, outer bool, param *unne
 		ures []bytejson.UnnestResult
 	)
 
-	rbat = batch.New(false, arg.Attrs)
+	rbat = batch.NewWithSize(len(arg.Attrs))
+	rbat.Attrs = arg.Attrs
 	rbat.Cnt = 1
 	for i := range arg.retSchema {
 		rbat.Vecs[i] = vector.NewVec(arg.retSchema[i])

@@ -16,7 +16,6 @@ package txnimpl
 
 import (
 	"github.com/matrixorigin/matrixone/pkg/objectio"
-	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/buffer/base"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/catalog"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/common"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/containers"
@@ -36,12 +35,12 @@ type anode struct {
 func NewANode(
 	tbl *txnTable,
 	fs *objectio.ObjectFS,
-	mgr base.INodeManager,
+	indexCache model.LRUCache,
 	sched tasks.TaskScheduler,
 	meta *catalog.BlockEntry,
 ) *anode {
 	impl := new(anode)
-	impl.baseNode = newBaseNode(tbl, fs, mgr, sched, meta)
+	impl.baseNode = newBaseNode(tbl, fs, indexCache, sched, meta)
 	impl.storage.mnode = newMemoryNode(impl.baseNode)
 	impl.storage.mnode.Ref()
 	return impl
@@ -86,12 +85,12 @@ func (n *anode) Close() (err error) {
 }
 
 func (n *anode) Append(data *containers.Batch, offset uint32) (an uint32, err error) {
-	schema := n.table.entry.GetSchema()
+	schema := n.table.GetLocalSchema()
 	if n.storage.mnode.data == nil {
 		opts := containers.Options{}
 		opts.Capacity = data.Length() - int(offset)
-		if opts.Capacity > int(txnbase.MaxNodeRows) {
-			opts.Capacity = int(txnbase.MaxNodeRows)
+		if opts.Capacity > int(MaxNodeRows) {
+			opts.Capacity = int(MaxNodeRows)
 		}
 		n.storage.mnode.data = containers.BuildBatch(schema.AllNames(), schema.AllTypes(), opts)
 	}
@@ -128,7 +127,7 @@ func (n *anode) FillColumnView(view *model.ColumnView) (err error) {
 }
 
 func (n *anode) GetSpace() uint32 {
-	return txnbase.MaxNodeRows - n.storage.mnode.rows
+	return MaxNodeRows - n.storage.mnode.rows
 }
 
 func (n *anode) RowsWithoutDeletes() uint32 {

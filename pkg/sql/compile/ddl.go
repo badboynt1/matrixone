@@ -17,6 +17,8 @@ package compile
 import (
 	"context"
 	"fmt"
+	"math"
+
 	"github.com/matrixorigin/matrixone/pkg/catalog"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/compress"
@@ -34,7 +36,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/vm/engine"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
 	"golang.org/x/exp/constraints"
-	"math"
 )
 
 var (
@@ -79,14 +80,13 @@ func (s *Scope) DropDatabase(c *Compile) error {
 	errChan := make(chan error, len(s.PreScopes))
 	for i := range s.PreScopes {
 		switch s.PreScopes[i].Magic {
-		case Deletion:
-			// execute additional sql pipeline, currently, only delete operations are performed
+		case Merge:
 			go func(cs *Scope) {
 				var err error
 				defer func() {
 					errChan <- err
 				}()
-				_, err = cs.Delete(c)
+				err = cs.MergeRun(c)
 			}(s.PreScopes[i])
 		}
 	}
@@ -158,23 +158,22 @@ func (s *Scope) AlterTable(c *Compile) error {
 	errChan := make(chan error, len(s.PreScopes))
 	for i := range s.PreScopes {
 		switch s.PreScopes[i].Magic {
-		case Deletion:
-			// execute additional sql pipeline, currently, only delete operations are performed
+		case Merge:
 			go func(cs *Scope) {
 				var err error
 				defer func() {
 					errChan <- err
 				}()
-				_, err = cs.Delete(c)
+				err = cs.MergeRun(c)
 			}(s.PreScopes[i])
-		case Update:
-			go func(cs *Scope) {
-				var err error
-				defer func() {
-					errChan <- err
-				}()
-				_, err = cs.Update(c)
-			}(s.PreScopes[i])
+			// case Update:
+			// 	go func(cs *Scope) {
+			// 		var err error
+			// 		defer func() {
+			// 			errChan <- err
+			// 		}()
+			// 		_, err = cs.Update(c)
+			// 	}(s.PreScopes[i])
 		}
 	}
 
@@ -737,7 +736,7 @@ func (s *Scope) CreateIndex(c *Compile) error {
 		if err != nil {
 			return err
 		}
-		bat, err := rds[0].Read(c.ctx, targetAttrs, nil, c.proc.Mp())
+		bat, err := rds[0].Read(c.ctx, targetAttrs, nil, c.proc.Mp(), nil)
 		if err != nil {
 			return err
 		}
@@ -773,14 +772,13 @@ func (s *Scope) DropIndex(c *Compile) error {
 	errChan := make(chan error, len(s.PreScopes))
 	for i := range s.PreScopes {
 		switch s.PreScopes[i].Magic {
-		case Deletion:
-			// execute additional sql pipeline, currently, only delete operations are performed
+		case Merge:
 			go func(cs *Scope) {
 				var err error
 				defer func() {
 					errChan <- err
 				}()
-				_, err = cs.Delete(c)
+				err = cs.MergeRun(c)
 			}(s.PreScopes[i])
 		}
 	}
@@ -1030,6 +1028,19 @@ func (s *Scope) TruncateTable(c *Compile) error {
 		}
 	}
 
+	//Truncate Partition subtable if needed
+	for _, name := range tqry.PartitionTableNames {
+		var err error
+		if isTemp {
+			dbSource.Truncate(c.ctx, engine.GetTempTableName(dbName, name))
+		} else {
+			_, err = dbSource.Truncate(c.ctx, name)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
 	// update tableDef of foreign key's table with new table id
 	for _, ftblId := range tqry.ForeignTbl {
 		_, _, fkRelation, err := c.e.GetRelationById(c.ctx, c.proc.TxnOperator, ftblId)
@@ -1073,7 +1084,7 @@ func (s *Scope) TruncateTable(c *Compile) error {
 	if isTemp {
 		err = colexec.ResetAutoInsrCol(c.e, c.ctx, engine.GetTempTableName(dbName, tblName), dbSource, c.proc, id, newId, defines.TEMPORARY_DBNAME)
 	} else {
-		err = colexec.ResetAutoInsrCol(c.e, c.ctx, tblName, dbSource, c.proc, id, newId, dbName)
+		err = colexec.ResetAutoInsrCol(c.e, c.ctx, tblName, dbSource, c.proc, oldId, newId, dbName)
 	}
 	if err != nil {
 		return err
@@ -1115,14 +1126,13 @@ func (s *Scope) DropTable(c *Compile) error {
 	errChan := make(chan error, len(s.PreScopes))
 	for i := range s.PreScopes {
 		switch s.PreScopes[i].Magic {
-		case Deletion:
-			// execute additional sql pipeline, currently, only delete operations are performed
+		case Merge:
 			go func(cs *Scope) {
 				var err error
 				defer func() {
 					errChan <- err
 				}()
-				_, err = cs.Delete(c)
+				err = cs.MergeRun(c)
 			}(s.PreScopes[i])
 		}
 	}
@@ -1326,6 +1336,7 @@ func planColsToExeCols(planCols []*plan.ColDef) []engine.TableDef {
 				Comment:       col.GetComment(),
 				ClusterBy:     col.ClusterBy,
 				AutoIncrement: col.Typ.GetAutoIncr(),
+				IsHidden:      col.Hidden,
 			},
 		}
 	}

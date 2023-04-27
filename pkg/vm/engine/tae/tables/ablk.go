@@ -24,7 +24,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/objectio"
-	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/buffer/base"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/catalog"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/common"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/compute"
@@ -45,10 +44,10 @@ type ablock struct {
 func newABlock(
 	meta *catalog.BlockEntry,
 	fs *objectio.ObjectFS,
-	bufMgr base.INodeManager,
+	indexCache model.LRUCache,
 	scheduler tasks.TaskScheduler) *ablock {
 	blk := &ablock{}
-	blk.baseBlock = newBaseBlock(blk, meta, bufMgr, fs, scheduler)
+	blk.baseBlock = newBaseBlock(blk, meta, indexCache, fs, scheduler)
 	blk.mvcc.SetAppendListener(blk.OnApplyAppend)
 	blk.mvcc.SetDeletesListener(blk.OnApplyDelete)
 	if blk.meta.HasDropCommitted() {
@@ -378,7 +377,7 @@ func (blk *ablock) getPersistedRowByFilter(
 	}
 	defer sortKey.Close()
 	rows := make([]uint32, 0)
-	err = sortKey.ForeachShallow(func(v any, _ bool, offset int) error {
+	err = sortKey.Foreach(func(v any, _ bool, offset int) error {
 		if compute.CompareGeneric(v, filter.Val, sortKey.GetType().Oid) == 0 {
 			row := uint32(offset)
 			rows = append(rows, row)
@@ -572,7 +571,7 @@ func (blk *ablock) inMemoryBatchDedup(
 
 	def := blk.meta.GetSchema().GetSingleSortKey()
 	v, isNull := mnode.GetValueByRow(int(dupRow), def.Idx)
-	entry := common.TypeStringValue(keys.GetType(), v, isNull)
+	entry := common.TypeStringValue(*keys.GetType(), v, isNull)
 	return moerr.NewDuplicateEntryNoCtx(entry, def.Name)
 }
 

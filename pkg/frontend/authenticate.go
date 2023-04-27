@@ -780,7 +780,7 @@ var (
 				status varchar(300),
 				created_time timestamp,
 				comments varchar(256),
-				version bigint unsigned default 0,
+				version bigint unsigned auto_increment,
 				suspended_time timestamp default NULL
 			);`,
 		`create table mo_role(
@@ -823,7 +823,7 @@ var (
 		`create table mo_user_defined_function(
 				function_id int auto_increment,
 				name     varchar(100),
-				creator  int unsigned,
+				owner  int unsigned,
 				args     text,
 				retType  varchar(20),
 				body     text,
@@ -903,7 +903,7 @@ var (
 
 	initMoUserDefinedFunctionFormat = `insert into mo_catalog.mo_user_defined_function(
 			name,
-			creator,
+			owner,
 			args,
 			retType,
 			body,
@@ -2337,8 +2337,9 @@ func doAlterUser(ctx context.Context, ses *Session, au *tree.AlterUser) error {
 	var user *tree.User
 	var userName string
 	var hostName string
-	var passwaord string
+	var password string
 	var erArray []ExecResult
+	var encryption string
 	account := ses.GetTenantInfo()
 	currentUser := account.User
 
@@ -2360,14 +2361,18 @@ func doAlterUser(ctx context.Context, ses *Session, au *tree.AlterUser) error {
 	if err != nil {
 		return err
 	}
-	user = au.Users[0]
-	userName = user.Username
-	hostName = user.Hostname
-	passwaord = user.AuthOption.Str
 
 	bh := ses.GetBackgroundExec(ctx)
 	defer bh.Close()
 
+	user = au.Users[0]
+	userName = user.Username
+	hostName = user.Hostname
+	password = user.AuthOption.Str
+	if len(password) == 0 {
+		err = moerr.NewInternalError(ctx, "password is empty string")
+		goto handleFailed
+	}
 	//put it into the single transaction
 	err = bh.Exec(ctx, "begin")
 	if err != nil {
@@ -2429,8 +2434,11 @@ func doAlterUser(ctx context.Context, ses *Session, au *tree.AlterUser) error {
 		goto handleFailed
 	}
 
+	//encryption the password
+	encryption = HashPassWord(password)
+
 	if execResultArrayHasData(erArray) {
-		sql, err = getSqlForUpdatePasswordOfUser(ctx, passwaord, userName)
+		sql, err = getSqlForUpdatePasswordOfUser(ctx, encryption, userName)
 		if err != nil {
 			goto handleFailed
 		}
@@ -2443,7 +2451,7 @@ func doAlterUser(ctx context.Context, ses *Session, au *tree.AlterUser) error {
 			err = moerr.NewInternalError(ctx, "Operation ALTER USER failed for '%s'@'%s', don't have the privilege to alter", userName, hostName)
 			goto handleFailed
 		}
-		sql, err = getSqlForUpdatePasswordOfUser(ctx, passwaord, userName)
+		sql, err = getSqlForUpdatePasswordOfUser(ctx, encryption, userName)
 		if err != nil {
 			goto handleFailed
 		}
@@ -2604,7 +2612,9 @@ func doAlterAccount(ctx context.Context, ses *Session, aa *tree.AlterAccount) er
 			}
 
 			//2, update the password
-			sql, err = getSqlForUpdatePasswordOfUser(ctx, aa.AuthOption.IdentifiedType.Str, aa.AuthOption.AdminName)
+			//encryption the password
+			encryption := HashPassWord(aa.AuthOption.IdentifiedType.Str)
+			sql, err = getSqlForUpdatePasswordOfUser(ctx, encryption, aa.AuthOption.AdminName)
 			if err != nil {
 				goto handleFailed
 			}
@@ -2641,7 +2651,7 @@ func doAlterAccount(ctx context.Context, ses *Session, aa *tree.AlterAccount) er
 					goto handleFailed
 				}
 			} else if aa.StatusOption.Option == tree.AccountStatusOpen {
-				sql, err = getSqlForUpdateStatusAndVersionOfAccount(ctx, aa.StatusOption.Option.String(), types.CurrentTimestamp().String2(time.UTC, 0), aa.Name, (version+1)%math.MaxInt64)
+				sql, err = getSqlForUpdateStatusAndVersionOfAccount(ctx, aa.StatusOption.Option.String(), types.CurrentTimestamp().String2(time.UTC, 0), aa.Name, (version+1)%math.MaxUint64)
 				if err != nil {
 					goto handleFailed
 				}
@@ -2658,6 +2668,14 @@ func doAlterAccount(ctx context.Context, ses *Session, aa *tree.AlterAccount) er
 	if err != nil {
 		goto handleFailed
 	}
+
+	//if alter account suspend, add the account to kill queue
+	if accountExist {
+		if aa.StatusOption.Exist && aa.StatusOption.Option == tree.AccountStatusSuspend {
+			ses.getRoutineManager().accountRoutine.enKillQueue(int64(targetAccountId), version)
+		}
+	}
+
 	return err
 handleFailed:
 	//ROLLBACK the transaction
@@ -3296,6 +3314,7 @@ func doDropAccount(ctx context.Context, ses *Session, da *tree.DropAccount) erro
 
 	var deleteCtx context.Context
 	var accountId int64
+	var version uint64
 	var hasAccount = true
 	clusterTables := make(map[string]int)
 
@@ -3331,6 +3350,10 @@ func doDropAccount(ctx context.Context, ses *Session, da *tree.DropAccount) erro
 
 	if execResultArrayHasData(erArray) {
 		accountId, err = erArray[0].GetInt64(ctx, 0, 0)
+		if err != nil {
+			goto handleFailed
+		}
+		version, err = erArray[0].GetUint64(ctx, 0, 3)
 		if err != nil {
 			goto handleFailed
 		}
@@ -3500,6 +3523,10 @@ func doDropAccount(ctx context.Context, ses *Session, da *tree.DropAccount) erro
 	if err != nil {
 		goto handleFailed
 	}
+
+	//if drop the account, add the account to kill queue
+	ses.getRoutineManager().accountRoutine.enKillQueue(accountId, version)
+
 	return err
 
 handleFailed:
@@ -4961,7 +4988,8 @@ func determinePrivilegeSetOfStatement(stmt tree.Statement) *privilege {
 		*tree.ShowGrants, *tree.ShowCollation, *tree.ShowIndex,
 		*tree.ShowTableNumber, *tree.ShowColumnNumber,
 		*tree.ShowTableValues, *tree.ShowNodeList, *tree.ShowRolesStmt,
-		*tree.ShowLocks, *tree.ShowFunctionStatus, *tree.ShowPublications, *tree.ShowSubscriptions:
+		*tree.ShowLocks, *tree.ShowFunctionStatus, *tree.ShowPublications, *tree.ShowSubscriptions,
+		*tree.ShowBackendServers:
 		objType = objectTypeNone
 		kind = privilegeKindNone
 	case *tree.ShowAccounts:
@@ -5065,33 +5093,53 @@ func extractPrivilegeTipsFromPlan(p *plan2.Plan) privilegeTipsArray {
 	}
 	if p.GetQuery() != nil { //select,insert select, update, delete
 		q := p.GetQuery()
-		lastNode := q.Nodes[len(q.Nodes)-1]
+
+		// lastNode := q.Nodes[len(q.Nodes)-1]
 		var t PrivilegeType
 		var clusterTable bool
 		var clusterTableOperation clusterTableOperationType
+
+		switch q.StmtType {
+		case plan.Query_UPDATE:
+			t = PrivilegeTypeUpdate
+			clusterTableOperation = clusterTableModify
+		case plan.Query_DELETE:
+			t = PrivilegeTypeDelete
+			clusterTableOperation = clusterTableModify
+		case plan.Query_INSERT:
+			t = PrivilegeTypeInsert
+			clusterTableOperation = clusterTableModify
+		default:
+			t = PrivilegeTypeSelect
+			clusterTableOperation = clusterTableSelect
+		}
+
 		for _, node := range q.Nodes {
 			if node.NodeType == plan.Node_TABLE_SCAN {
-				switch lastNode.NodeType {
-				case plan.Node_UPDATE:
-					t = PrivilegeTypeUpdate
-					clusterTableOperation = clusterTableModify
-				case plan.Node_DELETE:
-					t = PrivilegeTypeDelete
-					clusterTableOperation = clusterTableModify
-				default:
-					t = PrivilegeTypeSelect
-					clusterTableOperation = clusterTableSelect
-				}
 				if node.ObjRef != nil {
 					if node.TableDef != nil && node.TableDef.TableType == catalog.SystemClusterRel {
 						clusterTable = true
 					} else {
 						clusterTable = isClusterTable(node.ObjRef.GetSchemaName(), node.ObjRef.GetObjName())
 					}
+
+					var scanTyp PrivilegeType
+					switch q.StmtType {
+					case plan.Query_UPDATE:
+						scanTyp = PrivilegeTypeUpdate
+						clusterTableOperation = clusterTableModify
+					case plan.Query_DELETE:
+						scanTyp = PrivilegeTypeDelete
+						clusterTableOperation = clusterTableModify
+					default:
+						scanTyp = PrivilegeTypeSelect
+						clusterTableOperation = clusterTableSelect
+					}
+
 					//do not check the privilege of the index table
 					if !isIndexTable(node.ObjRef.GetObjName()) {
 						appendPt(privilegeTips{
-							typ:                   t,
+							typ:                   scanTyp,
 							databaseName:          node.ObjRef.GetSchemaName(),
 							tableName:             node.ObjRef.GetObjName(),
 							isClusterTable:        clusterTable,
@@ -5099,38 +5147,30 @@ func extractPrivilegeTipsFromPlan(p *plan2.Plan) privilegeTipsArray {
 						})
 					}
 				}
-			} else if node.NodeType == plan.Node_INSERT { //insert select
-				if node.ObjRef != nil {
-					if node.TableDef != nil && node.TableDef.TableType == catalog.SystemClusterRel {
-						clusterTable = true
-					} else {
-						clusterTable = isClusterTable(node.ObjRef.GetSchemaName(), node.ObjRef.GetObjName())
-					}
+			} else if node.NodeType == plan.Node_INSERT {
+				if node.InsertCtx != nil && node.InsertCtx.Ref != nil {
+					objRef := node.InsertCtx.Ref
 					//do not check the privilege of the index table
 					if !isIndexTable(node.ObjRef.GetObjName()) {
 						appendPt(privilegeTips{
-							typ:                   PrivilegeTypeInsert,
-							databaseName:          node.ObjRef.GetSchemaName(),
-							tableName:             node.ObjRef.GetObjName(),
-							isClusterTable:        clusterTable,
+							typ:                   t,
+							databaseName:          objRef.GetSchemaName(),
+							tableName:             objRef.GetObjName(),
+							isClusterTable:        node.InsertCtx.IsClusterTable,
 							clusterTableOperation: clusterTableModify,
 						})
 					}
 				}
 			} else if node.NodeType == plan.Node_DELETE {
-				if node.ObjRef != nil {
-					if node.TableDef != nil && node.TableDef.TableType == catalog.SystemClusterRel {
-						clusterTable = true
-					} else {
-						clusterTable = isClusterTable(node.ObjRef.GetSchemaName(), node.ObjRef.GetObjName())
-					}
+				if node.DeleteCtx != nil && node.DeleteCtx.Ref != nil {
+					objRef := node.DeleteCtx.Ref
 					//do not check the privilege of the index table
 					if !isIndexTable(node.ObjRef.GetObjName()) {
 						appendPt(privilegeTips{
-							typ:                   PrivilegeTypeDelete,
-							databaseName:          node.ObjRef.GetSchemaName(),
-							tableName:             node.ObjRef.GetObjName(),
-							isClusterTable:        clusterTable,
+							typ:                   t,
+							databaseName:          objRef.GetSchemaName(),
+							tableName:             objRef.GetObjName(),
+							isClusterTable:        node.DeleteCtx.IsClusterTable,
 							clusterTableOperation: clusterTableModify,
 						})
 					}
@@ -6476,8 +6516,11 @@ func createTablesInMoCatalog(ctx context.Context, bh BackgroundExec, tenant *Ten
 		defaultPassword = d
 	}
 
-	initMoUser1 := fmt.Sprintf(initMoUserFormat, rootID, rootHost, rootName, defaultPassword, rootStatus, types.CurrentTimestamp().String2(time.UTC, 0), rootExpiredTime, rootLoginType, rootCreatorID, rootOwnerRoleID, rootDefaultRoleID)
-	initMoUser2 := fmt.Sprintf(initMoUserFormat, dumpID, dumpHost, dumpName, defaultPassword, dumpStatus, types.CurrentTimestamp().String2(time.UTC, 0), dumpExpiredTime, dumpLoginType, dumpCreatorID, dumpOwnerRoleID, dumpDefaultRoleID)
+	//encryption the password
+	encryption := HashPassWord(defaultPassword)
+
+	initMoUser1 := fmt.Sprintf(initMoUserFormat, rootID, rootHost, rootName, encryption, rootStatus, types.CurrentTimestamp().String2(time.UTC, 0), rootExpiredTime, rootLoginType, rootCreatorID, rootOwnerRoleID, rootDefaultRoleID)
+	initMoUser2 := fmt.Sprintf(initMoUserFormat, dumpID, dumpHost, dumpName, encryption, dumpStatus, types.CurrentTimestamp().String2(time.UTC, 0), dumpExpiredTime, dumpLoginType, dumpCreatorID, dumpOwnerRoleID, dumpDefaultRoleID)
 	addSqlIntoSet(initMoUser1)
 	addSqlIntoSet(initMoUser2)
 
@@ -6823,6 +6866,8 @@ func createTablesInMoCatalogOfGeneralTenant2(bh BackgroundExec, ca *tree.CreateA
 		err = moerr.NewInternalError(newTenantCtx, "password is empty string")
 		return err
 	}
+	//encryption the password
+	encryption := HashPassWord(password)
 	status := rootStatus
 	//TODO: fix the status of user or account
 	if ca.StatusOption.Exist {
@@ -6831,7 +6876,7 @@ func createTablesInMoCatalogOfGeneralTenant2(bh BackgroundExec, ca *tree.CreateA
 		}
 	}
 	//the first user id in the general tenant
-	initMoUser1 := fmt.Sprintf(initMoUserFormat, newTenant.GetUserID(), rootHost, name, password, status,
+	initMoUser1 := fmt.Sprintf(initMoUserFormat, newTenant.GetUserID(), rootHost, name, encryption, status,
 		types.CurrentTimestamp().String2(time.UTC, 0), rootExpiredTime, rootLoginType,
 		newTenant.GetUserID(), newTenant.GetDefaultRoleID(), accountAdminRoleID)
 	addSqlIntoSet(initMoUser1)
@@ -7101,12 +7146,15 @@ func InitUser(ctx context.Context, ses *Session, tenant *TenantInfo, cu *tree.Cr
 			goto handleFailed
 		}
 
+		//encryption the password
+		encryption := HashPassWord(password)
+
 		//TODO: get comment or attribute. there is no field in mo_user to store it.
 		host = user.Hostname
 		if len(user.Hostname) == 0 || user.Hostname == "%" {
 			host = rootHost
 		}
-		initMoUser1 := fmt.Sprintf(initMoUserWithoutIDFormat, host, user.Username, password, status,
+		initMoUser1 := fmt.Sprintf(initMoUserWithoutIDFormat, host, user.Username, encryption, status,
 			types.CurrentTimestamp().String2(time.UTC, 0), rootExpiredTime, rootLoginType,
 			tenant.GetUserID(), tenant.GetDefaultRoleID(), newRoleId)
 

@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/objectio"
 
 	"github.com/matrixorigin/matrixone/pkg/util/fault"
@@ -57,6 +58,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/testutils"
 	"github.com/panjf2000/ants/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAppend(t *testing.T) {
@@ -397,7 +399,7 @@ func TestNonAppendableBlock(t *testing.T) {
 		name := objectio.BuildObjectName(uuid, 0)
 		writer, err := blockio.NewBlockWriterNew(dataBlk.GetFs().Service, name)
 		assert.Nil(t, err)
-		_, err = writer.WriteBlock(bat)
+		_, err = writer.WriteBatch(containers.ToCNBatch(bat))
 		assert.Nil(t, err)
 		blocks, _, err := writer.Sync(context.Background())
 		assert.Nil(t, err)
@@ -925,8 +927,6 @@ func TestAutoCompactABlk2(t *testing.T) {
 	testutils.EnsureNoLeak(t)
 	opts := new(options.Options)
 	opts.CacheCfg = new(options.CacheCfg)
-	opts.CacheCfg.InsertCapacity = common.M * 5
-	opts.CacheCfg.TxnCapacity = common.M
 	opts = config.WithQuickScanAndCKPOpts(opts)
 	db := initDB(t, opts)
 	defer db.Close()
@@ -989,7 +989,6 @@ func TestAutoCompactABlk2(t *testing.T) {
 		return db.Scheduler.GetPenddingLSNCnt() == 0
 	})
 	assert.Equal(t, uint64(0), db.Scheduler.GetPenddingLSNCnt())
-	t.Log(db.MTBufMgr.String())
 	t.Log(db.Catalog.SimplePPString(common.PPL1))
 	t.Logf("GetPenddingLSNCnt: %d", db.Scheduler.GetPenddingLSNCnt())
 	t.Logf("GetCheckpointed: %d", db.Scheduler.GetCheckpointedLSN())
@@ -1230,8 +1229,6 @@ func TestUnload1(t *testing.T) {
 	testutils.EnsureNoLeak(t)
 	opts := new(options.Options)
 	opts.CacheCfg = new(options.CacheCfg)
-	opts.CacheCfg.InsertCapacity = common.K
-	opts.CacheCfg.TxnCapacity = common.M
 	db := initDB(t, opts)
 	defer db.Close()
 
@@ -1275,8 +1272,6 @@ func TestUnload2(t *testing.T) {
 	testutils.EnsureNoLeak(t)
 	opts := new(options.Options)
 	opts.CacheCfg = new(options.CacheCfg)
-	opts.CacheCfg.InsertCapacity = common.K*4 - common.K/2
-	opts.CacheCfg.TxnCapacity = common.M
 	db := initDB(t, opts)
 	defer db.Close()
 
@@ -1338,9 +1333,6 @@ func TestUnload2(t *testing.T) {
 		}
 		_ = txn.Commit()
 	}
-
-	t.Log(db.MTBufMgr.String())
-	// t.Log(db.Opts.Catalog.SimplePPString(common.PPL1))
 }
 
 func TestDelete1(t *testing.T) {
@@ -3398,7 +3390,9 @@ func (c *dummyCpkGetter) CollectCheckpointsInRange(ctx context.Context, start, e
 	return "", types.TS{}, nil
 }
 
-func (c *dummyCpkGetter) FlushTable(dbID, tableID uint64, ts types.TS) error { return nil }
+func (c *dummyCpkGetter) FlushTable(ctx context.Context, dbID, tableID uint64, ts types.TS) error {
+	return nil
+}
 
 func TestLogtailBasic(t *testing.T) {
 	defer testutils.AfterTest(t)()
@@ -4032,9 +4026,9 @@ func TestBlockRead(t *testing.T) {
 		BlockID:    bid,
 		SegmentID:  sid,
 		EntryState: true,
-		MetaLoc:    metaloc,
-		DeltaLoc:   deltaloc,
 	}
+	info.SetMetaLocation(metaloc)
+	info.SetDeltaLocation(deltaloc)
 
 	columns := make([]string, 0)
 	colIdxs := make([]uint16, 0)
@@ -4052,11 +4046,11 @@ func TestBlockRead(t *testing.T) {
 	assert.NoError(t, err)
 	infos := make([][]*pkgcatalog.BlockInfo, 0)
 	infos = append(infos, []*pkgcatalog.BlockInfo{info})
-	err = blockio.PrefetchInner(colIdxs, fs, infos)
+	err = blockio.BlockPrefetch(colIdxs, fs, infos)
 	assert.NoError(t, err)
 	b1, err := blockio.BlockReadInner(
 		context.Background(), info, colIdxs, colTyps,
-		beforeDel, fs, pool,
+		beforeDel, fs, pool, nil,
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, len(columns), len(b1.Vecs))
@@ -4064,13 +4058,13 @@ func TestBlockRead(t *testing.T) {
 
 	b2, err := blockio.BlockReadInner(
 		context.Background(), info, colIdxs, colTyps,
-		afterFirstDel, fs, pool,
+		afterFirstDel, fs, pool, nil,
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, 19, b2.Vecs[0].Length())
 	b3, err := blockio.BlockReadInner(
 		context.Background(), info, colIdxs, colTyps,
-		afterSecondDel, fs, pool,
+		afterSecondDel, fs, pool, nil,
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, len(columns), len(b2.Vecs))
@@ -4081,7 +4075,7 @@ func TestBlockRead(t *testing.T) {
 		context.Background(), info,
 		[]uint16{2},
 		[]types.Type{types.T_Rowid.ToType()},
-		afterSecondDel, fs, pool,
+		afterSecondDel, fs, pool, nil,
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(b4.Vecs))
@@ -4093,7 +4087,7 @@ func TestBlockRead(t *testing.T) {
 		context.Background(), info,
 		[]uint16{2},
 		[]types.Type{types.T_Rowid.ToType()},
-		afterSecondDel, fs, pool,
+		afterSecondDel, fs, pool, nil,
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(b5.Vecs))
@@ -4210,6 +4204,7 @@ func TestFlushTable(t *testing.T) {
 	table, err := db.GetRelationByName(schema.Name)
 	assert.Nil(t, err)
 	err = tae.FlushTable(
+		context.Background(),
 		0,
 		db.GetID(),
 		table.ID(),
@@ -4481,7 +4476,7 @@ func TestTransfer(t *testing.T) {
 	assert.NoError(t, err)
 
 	meta := rel1.GetMeta().(*catalog.TableEntry)
-	err = tae.FlushTable(0, meta.GetDB().ID, meta.ID,
+	err = tae.FlushTable(context.Background(), 0, meta.GetDB().ID, meta.ID,
 		types.BuildTS(time.Now().UTC().UnixNano(), 0))
 	assert.NoError(t, err)
 
@@ -4605,7 +4600,7 @@ func TestTransfer3(t *testing.T) {
 	assert.NoError(t, err)
 
 	meta := rel1.GetMeta().(*catalog.TableEntry)
-	err = tae.FlushTable(0, meta.GetDB().ID, meta.ID,
+	err = tae.FlushTable(context.Background(), 0, meta.GetDB().ID, meta.ID,
 		types.BuildTS(time.Now().UTC().UnixNano(), 0))
 	assert.NoError(t, err)
 
@@ -4713,7 +4708,7 @@ func TestAlwaysUpdate(t *testing.T) {
 		assert.Nil(t, err)
 		writer.SetPrimaryKey(3)
 		for _, bat := range bats[i*25 : (i+1)*25] {
-			_, err := writer.WriteBlock(bat)
+			_, err := writer.WriteBatch(containers.ToCNBatch(bat))
 			assert.Nil(t, err)
 		}
 		blocks, _, err := writer.Sync(context.Background())
@@ -5038,7 +5033,7 @@ func TestGCDropTable(t *testing.T) {
 	tae.restart()
 }
 
-func TestUpdateCstr(t *testing.T) {
+func TestAlterTableBasic(t *testing.T) {
 	defer testutils.AfterTest(t)()
 	opts := config.WithLongScanAndCKPOpts(nil)
 	tae := newTestEngine(t, opts)
@@ -5049,6 +5044,7 @@ func TestUpdateCstr(t *testing.T) {
 	schema.BlockMaxRows = 10
 	schema.SegmentMaxBlocks = 2
 	schema.Constraint = []byte("start version")
+	schema.Comment = "comment version"
 
 	txn, _ := tae.StartTxn(nil)
 	db, _ := txn.CreateDatabase("db", "", "")
@@ -5058,16 +5054,18 @@ func TestUpdateCstr(t *testing.T) {
 	txn, _ = tae.StartTxn(nil)
 	db, _ = txn.GetDatabase("db")
 	tbl, _ := db.GetRelationByName("test")
-	err := tbl.UpdateConstraint([]byte("version 1"))
-	assert.NoError(t, err)
+	err := tbl.AlterTable(context.Background(), api.NewUpdateConstraintReq(0, 0, "version 1"))
+	require.NoError(t, err)
+	err = tbl.AlterTable(context.Background(), api.NewUpdateCommentReq(0, 0, "comment version 1"))
+	require.NoError(t, err)
 	err = txn.Commit()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	txn, _ = tae.StartTxn(nil)
 	db, _ = txn.GetDatabase("db")
 	tbl, _ = db.GetRelationByName("test")
-	err = tbl.UpdateConstraint([]byte("version 2"))
-	assert.NoError(t, err)
+	err = tbl.AlterTable(context.Background(), api.NewUpdateConstraintReq(0, 0, "version 2"))
+	require.NoError(t, err)
 	txn.Commit()
 
 	tots := func(ts types.TS) *timestamp.Timestamp {
@@ -5083,10 +5081,16 @@ func TestUpdateCstr(t *testing.T) {
 
 	bat, _ := batch.ProtoBatchToBatch(resp.Commands[0].Bat)
 	cstrCol := containers.NewNonNullBatchWithSharedMemory(bat).GetVectorByName(pkgcatalog.SystemRelAttr_Constraint)
-	assert.Equal(t, 3, cstrCol.Length())
-	assert.Equal(t, []byte("start version"), cstrCol.Get(0).([]byte))
-	assert.Equal(t, []byte("version 1"), cstrCol.Get(1).([]byte))
-	assert.Equal(t, []byte("version 2"), cstrCol.Get(2).([]byte))
+	require.Equal(t, 3, cstrCol.Length())
+	require.Equal(t, []byte("start version"), cstrCol.Get(0).([]byte))
+	require.Equal(t, []byte("version 1"), cstrCol.Get(1).([]byte))
+	require.Equal(t, []byte("version 2"), cstrCol.Get(2).([]byte))
+
+	commetCol := containers.NewNonNullBatchWithSharedMemory(bat).GetVectorByName(pkgcatalog.SystemRelAttr_Comment)
+	require.Equal(t, 3, cstrCol.Length())
+	require.Equal(t, []byte("comment version"), commetCol.Get(0).([]byte))
+	require.Equal(t, []byte("comment version 1"), commetCol.Get(1).([]byte))
+	require.Equal(t, []byte("comment version 1"), commetCol.Get(2).([]byte))
 
 	tae.restart()
 
@@ -5098,15 +5102,23 @@ func TestUpdateCstr(t *testing.T) {
 
 	bat, _ = batch.ProtoBatchToBatch(resp.Commands[0].Bat)
 	cstrCol = containers.NewNonNullBatchWithSharedMemory(bat).GetVectorByName(pkgcatalog.SystemRelAttr_Constraint)
-	assert.Equal(t, 3, cstrCol.Length())
-	assert.Equal(t, []byte("start version"), cstrCol.Get(0).([]byte))
-	assert.Equal(t, []byte("version 1"), cstrCol.Get(1).([]byte))
-	assert.Equal(t, []byte("version 2"), cstrCol.Get(2).([]byte))
+	require.Equal(t, 3, cstrCol.Length())
+	require.Equal(t, []byte("start version"), cstrCol.Get(0).([]byte))
+	require.Equal(t, []byte("version 1"), cstrCol.Get(1).([]byte))
+	require.Equal(t, []byte("version 2"), cstrCol.Get(2).([]byte))
+
+	commetCol = containers.NewNonNullBatchWithSharedMemory(bat).GetVectorByName(pkgcatalog.SystemRelAttr_Comment)
+	require.Equal(t, 3, cstrCol.Length())
+	require.Equal(t, []byte("comment version"), commetCol.Get(0).([]byte))
+	require.Equal(t, []byte("comment version 1"), commetCol.Get(1).([]byte))
+	require.Equal(t, []byte("comment version 1"), commetCol.Get(2).([]byte))
+
+	logutil.Info(tae.Catalog.SimplePPString(common.PPL2))
 
 	txn, _ = tae.StartTxn(nil)
 	db, _ = txn.GetDatabase("db")
 	_, err = db.DropRelationByName("test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	txn.Commit()
 
 	resp, _ = logtail.HandleSyncLogTailReq(ctx, new(dummyCpkGetter), tae.LogtailMgr, tae.Catalog, api.SyncLogTailReq{
@@ -5115,9 +5127,9 @@ func TestUpdateCstr(t *testing.T) {
 		Table:  &api.TableID{DbId: pkgcatalog.MO_CATALOG_ID, TbId: pkgcatalog.MO_COLUMNS_ID},
 	}, true)
 
-	assert.Equal(t, 2, len(resp.Commands)) // create and drop
-	assert.Equal(t, api.Entry_Insert, resp.Commands[0].EntryType)
-	assert.Equal(t, api.Entry_Delete, resp.Commands[1].EntryType)
+	require.Equal(t, 2, len(resp.Commands)) // create and drop
+	require.Equal(t, api.Entry_Insert, resp.Commands[0].EntryType)
+	require.Equal(t, api.Entry_Delete, resp.Commands[1].EntryType)
 }
 
 func TestGlobalCheckpoint1(t *testing.T) {
@@ -5154,8 +5166,6 @@ func TestAppendAndGC(t *testing.T) {
 	testutils.EnsureNoLeak(t)
 	opts := new(options.Options)
 	opts.CacheCfg = new(options.CacheCfg)
-	opts.CacheCfg.InsertCapacity = common.M * 5
-	opts.CacheCfg.TxnCapacity = common.M
 	opts = config.WithQuickScanAndCKPOpts(opts)
 	options.WithDisableGCCheckpoint()(opts)
 	tae := newTestEngine(t, opts)
@@ -5933,13 +5943,13 @@ func TestMarshalPartioned(t *testing.T) {
 	tae.createRelAndAppend(bats[0], true)
 
 	_, rel := tae.getRelation()
-	partioned := rel.GetMeta().(*catalog.TableEntry).GetSchema().Partitioned
+	partioned := rel.Schema().(*catalog.Schema).Partitioned
 	assert.Equal(t, int8(1), partioned)
 
 	tae.restart()
 
 	_, rel = tae.getRelation()
-	partioned = rel.GetMeta().(*catalog.TableEntry).GetSchema().Partitioned
+	partioned = rel.Schema().(*catalog.Schema).Partitioned
 	assert.Equal(t, int8(1), partioned)
 
 	err := tae.BGCheckpointRunner.ForceIncrementalCheckpoint(tae.TxnMgr.StatMaxCommitTS())
@@ -5952,7 +5962,7 @@ func TestMarshalPartioned(t *testing.T) {
 	tae.restart()
 
 	_, rel = tae.getRelation()
-	partioned = rel.GetMeta().(*catalog.TableEntry).GetSchema().Partitioned
+	partioned = rel.Schema().(*catalog.Schema).Partitioned
 	assert.Equal(t, int8(1), partioned)
 }
 
@@ -6010,4 +6020,58 @@ func TestCompactLargeTable(t *testing.T) {
 	tae.restart()
 
 	tae.checkRowsByScan(10, true)
+}
+
+func TestCommitS3Blocks(t *testing.T) {
+	opts := config.WithQuickScanAndCKPAndGCOpts(nil)
+	tae := newTestEngine(t, opts)
+	defer tae.Close()
+
+	schema := catalog.MockSchemaAll(60, 3)
+	schema.BlockMaxRows = 20
+	schema.SegmentMaxBlocks = 10
+	schema.Partitioned = 1
+	tae.bindSchema(schema)
+
+	data := catalog.MockBatch(schema, 200)
+	datas := data.Split(10)
+	tae.createRelAndAppend(datas[0], true)
+	datas = datas[1:]
+
+	blkMetas := make([]objectio.Location, 0)
+	for _, bat := range datas {
+		name := objectio.BuildObjectName(objectio.NewSegmentid(), 0)
+		writer, err := blockio.NewBlockWriterNew(tae.Fs.Service, name)
+		assert.Nil(t, err)
+		writer.SetPrimaryKey(3)
+		for i := 0; i < 50; i++ {
+			_, err := writer.WriteBatch(containers.ToCNBatch(bat))
+			assert.Nil(t, err)
+			//offset++
+		}
+		blocks, _, err := writer.Sync(context.Background())
+		assert.Nil(t, err)
+		assert.Equal(t, 50, len(blocks))
+		for _, blk := range blocks {
+			metaLoc := blockio.EncodeLocation(
+				writer.GetName(),
+				blk.GetExtent(),
+				uint32(bat.Vecs[0].Length()),
+				blk.GetID())
+			assert.Nil(t, err)
+			blkMetas = append(blkMetas, metaLoc)
+		}
+	}
+
+	for _, meta := range blkMetas {
+		txn, rel := tae.getRelation()
+		rel.AddBlksWithMetaLoc(nil, []objectio.Location{meta})
+		assert.NoError(t, txn.Commit())
+	}
+	for _, meta := range blkMetas {
+		txn, rel := tae.getRelation()
+		err := rel.AddBlksWithMetaLoc(nil, []objectio.Location{meta})
+		assert.Error(t, err)
+		assert.NoError(t, txn.Commit())
+	}
 }
