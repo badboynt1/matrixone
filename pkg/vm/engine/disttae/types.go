@@ -237,12 +237,11 @@ type txnTable struct {
 	defs              []engine.TableDef
 	tableDef          *plan.TableDef
 	idxs              []uint16
-	setPartsOnce      sync.Once
 	_parts            []*PartitionState
-	_partsErr         error
 	modifiedBlocks    [][]ModifyBlockMeta
-	blockMetas        [][]BlockMeta
-	blockMetasUpdated bool
+	blockInfos        [][]catalog.BlockInfo
+	blockInfosUpdated bool
+	logtailUpdated    bool
 
 	primaryIdx   int // -1 means no primary key
 	clusterByIdx int // -1 means no clusterBy key
@@ -390,7 +389,7 @@ func (z *Zonemap) Unmarshal(data []byte) error {
 }
 
 type ModifyBlockMeta struct {
-	meta    BlockMeta
+	meta    catalog.BlockInfo
 	deletes []int
 }
 
