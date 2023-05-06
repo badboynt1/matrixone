@@ -18,6 +18,7 @@ import (
 	"container/list"
 	"context"
 	"encoding/csv"
+	"github.com/matrixorigin/matrixone/pkg/sql/util"
 	"math"
 	"path"
 	"strings"
@@ -1427,4 +1428,20 @@ func onlyContainsTag(filter *Expr, tag int32) bool {
 	default:
 		return true
 	}
+}
+
+func GetSortOrder(tableDef *plan.TableDef, colIdx int) int {
+	colName := tableDef.Cols[colIdx].Name
+	if tableDef.Pkey != nil {
+		pkNames := tableDef.Pkey.Names
+		for i := range pkNames {
+			if colName == pkNames[i] {
+				return i
+			}
+		}
+	}
+	if tableDef.ClusterBy != nil {
+		return util.GetClusterByColumnOrder(tableDef.ClusterBy.Name, colName)
+	}
+	return -1
 }

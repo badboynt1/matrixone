@@ -82,12 +82,19 @@ func getInfoFromZoneMap(ctx context.Context, columns []int, blocks [][]catalog.B
 
 	//adjust ndv
 	lenobjs := float64(len(objs))
-	for idx := range columns {
-		rate := info.ColumnNDVs[idx] / tableCnt
-		if rate > 1 {
-			rate = 1
+	if lenobjs > 1 {
+		for idx := range columns {
+			rate := info.ColumnNDVs[idx] / tableCnt
+			if rate > 1 {
+				rate = 1
+			}
+			if rate < 0.1 {
+				info.ColumnNDVs[idx] /= math.Pow(lenobjs, (1 - rate))
+			}
+			if info.ColumnNDVs[idx] > tableCnt {
+				info.ColumnNDVs[idx] = tableCnt
+			}
 		}
-		info.ColumnNDVs[idx] /= math.Pow(lenobjs, (1 - rate))
 	}
 	return info, nil
 }
