@@ -382,18 +382,34 @@ func (builder *QueryBuilder) getJoinGraph(leaves []*plan.Node, conds []*plan.Exp
 			leftParent := vertices[leftId].parent
 			if leftParent == -1 || compareStats(vertices[rightId].node.Stats, vertices[leftParent].node.Stats) {
 				if isHighNdvCols(edge.leftCols, vertices[leftId].node.TableDef, builder) {
+					if leftParent != -1 {
+						delete(vertices[leftParent].children, leftId)
+					}
 					if vertices[rightId].parent != leftId {
 						vertices[leftId].parent = rightId
 						vertices[rightId].children[leftId] = nil
+					} else if vertices[leftId].node.Stats.Outcnt < vertices[rightId].node.Stats.Outcnt {
+						vertices[leftId].parent = rightId
+						vertices[rightId].children[leftId] = nil
+						vertices[rightId].parent = -1
+						delete(vertices[leftId].children, rightId)
 					}
 				}
 			}
 			rightParent := vertices[rightId].parent
 			if rightParent == -1 || compareStats(vertices[leftId].node.Stats, vertices[rightParent].node.Stats) {
+				if rightParent != -1 {
+					delete(vertices[rightParent].children, rightId)
+				}
 				if isHighNdvCols(edge.rightCols, vertices[rightId].node.TableDef, builder) {
 					if vertices[leftId].parent != rightId {
 						vertices[rightId].parent = leftId
 						vertices[leftId].children[rightId] = nil
+					} else if vertices[rightId].node.Stats.Outcnt < vertices[leftId].node.Stats.Outcnt {
+						vertices[rightId].parent = leftId
+						vertices[leftId].children[rightId] = nil
+						vertices[leftId].parent = -1
+						delete(vertices[rightId].children, leftId)
 					}
 				}
 			}
