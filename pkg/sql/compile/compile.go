@@ -738,7 +738,7 @@ func (c *Compile) compilePlanScope(ctx context.Context, step int32, curNodeIdx i
 			return nil, err
 		}
 		c.setAnalyzeCurrent(ss, curr)
-		if len(n.GroupBy) == 0 || !c.info.WithBigMem {
+		if len(n.GroupBy) == 0 || n.Stats.HashmapSize < 200000 {
 			ss = c.compileAgg(n, ss, ns)
 		} else {
 			ss = c.compileGroup(n, ss, ns)
@@ -1622,7 +1622,7 @@ func (c *Compile) compileAgg(n *plan.Node, ss []*Scope, ns []*plan.Node) []*Scop
 func (c *Compile) compileGroup(n *plan.Node, ss []*Scope, ns []*plan.Node) []*Scope {
 	currentIsFirst := c.anal.isFirst
 	c.anal.isFirst = false
-	rs := c.newScopeList(validScopeCount(ss), int(n.Stats.BlockNum))
+	rs := c.newScopeList(validScopeCount(ss), 4)
 	j := 0
 	for i := range ss {
 		if containBrokenNode(ss[i]) {
