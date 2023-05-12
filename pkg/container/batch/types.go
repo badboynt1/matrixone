@@ -199,11 +199,23 @@ func (bs *Batches) GetBatchByIndex(i int) *Batch {
 	return bs.batches[i]
 }
 
+func (bs *Batches) AddValueInZSOffset(value int64, offset int) {
+	for i := range bs.batches {
+		if offset >= bs.batches[i].Length() {
+			offset -= bs.batches[i].Length()
+		} else {
+			bs.batches[i].Zs[offset] += value
+			return
+		}
+	}
+}
+
 func (bs *Batches) GetLatestBatch() *Batch {
 	b := bs.batches[len(bs.batches)-1]
 	if b.Length() >= largeBatchLimit {
 		newBatch := New(bs.batches[0].Ro, bs.batches[0].Attrs)
 		newBatch.Aggs = bs.batches[0].Aggs
+		bs.batches = append(bs.batches, b)
 		return newBatch
 	}
 	return b

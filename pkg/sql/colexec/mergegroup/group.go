@@ -52,6 +52,10 @@ func Call(idx int, proc *process.Process, arg interface{}, isFirst bool, isLast 
 			}
 			ctr.state = Eval
 		case Eval:
+			if ctr.batches == nil {
+				ctr.state = End
+				return false, nil
+			}
 			currentBat := ctr.batches.GetBatchByIndex(index)
 			if ap.NeedEval {
 				for i, agg := range currentBat.Aggs {
@@ -158,6 +162,7 @@ func (ctr *container) process(bat *batch.Batch, proc *process.Process) error {
 
 func (ctr *container) processH0(bat *batch.Batch, proc *process.Process) error {
 	if ctr.batches == nil {
+		ctr.batches = &batch.Batches{}
 		ctr.batches.Init(bat)
 		return nil
 	}
@@ -201,6 +206,7 @@ func (ctr *container) processH8(bat *batch.Batch, proc *process.Process) error {
 		}
 	}
 	if flg {
+		ctr.batches = &batch.Batches{}
 		ctr.batches.Init(bat)
 	}
 	return nil
@@ -230,6 +236,7 @@ func (ctr *container) processHStr(bat *batch.Batch, proc *process.Process) error
 		}
 	}
 	if flg {
+		ctr.batches = &batch.Batches{}
 		ctr.batches.Init(bat)
 	}
 	return nil
@@ -247,7 +254,7 @@ func (ctr *container) batchFill(i int, n int, bat *batch.Batch, vals []uint64, h
 			currentBat.Zs = append(currentBat.Zs, 0)
 		}
 		ai := int64(v) - 1
-		currentBat.Zs[ai] += bat.Zs[i+k]
+		ctr.batches.AddValueInZSOffset(bat.Zs[i+k], int(ai))
 	}
 	if cnt > 0 {
 		for j, vec := range currentBat.Vecs {
