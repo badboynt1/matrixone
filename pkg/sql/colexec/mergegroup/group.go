@@ -53,18 +53,20 @@ func Call(idx int, proc *process.Process, arg interface{}, isFirst bool, isLast 
 			ctr.state = Eval
 		case Eval:
 			if ctr.batches != nil {
-				currentBat := ctr.batches.GetBatchByIndex(ctr.batchIdx)
-				if ap.NeedEval {
-					for i, agg := range currentBat.Aggs {
-						vec, err := agg.Eval(proc.Mp())
-						if err != nil {
-							ctr.state = End
-							return false, err
-						}
-						currentBat.Aggs[i] = nil
-						currentBat.Vecs = append(currentBat.Vecs, vec)
-						if vec != nil {
-							anal.Alloc(int64(vec.Size()))
+				for i := 0; i < ctr.batches.GetNumBatches(); i++ {
+					currentBat := ctr.batches.GetBatchByIndex(i)
+					if ap.NeedEval {
+						for i, agg := range currentBat.Aggs {
+							vec, err := agg.Eval(proc.Mp())
+							if err != nil {
+								ctr.state = End
+								return false, err
+							}
+							currentBat.Aggs[i] = nil
+							currentBat.Vecs = append(currentBat.Vecs, vec)
+							if vec != nil {
+								anal.Alloc(int64(vec.Size()))
+							}
 						}
 					}
 					currentBat.Aggs = nil
@@ -72,15 +74,16 @@ func Call(idx int, proc *process.Process, arg interface{}, isFirst bool, isLast 
 						currentBat.Zs[i] = 1
 					}
 				}
-				anal.Output(currentBat, isLast)
-				proc.SetInputBatch(currentBat)
-				ctr.batchIdx++
-				if ctr.batchIdx < ctr.batches.GetLength() {
-					return false, nil
-				}
 			}
 			ctr.state = End
 		case End:
+			currentBat := ctr.batches.GetBatchByIndex(ctr.batchIdx)
+			anal.Output(currentBat, isLast)
+			proc.SetInputBatch(currentBat)
+			ctr.batchIdx++
+			if ctr.batchIdx < ctr.batches.GetNumBatches() {
+				return false, nil
+			}
 			ctr.batches = nil
 			ap.Free(proc, false)
 			return true, nil

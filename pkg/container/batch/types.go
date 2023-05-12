@@ -182,7 +182,7 @@ type Batch struct {
 // for some large output node like mergegroup, mergesort
 // output a too large batch will cause error (for now , 1 allocation can not be larger than 1g)
 // we need to spilt large batch info small batches
-const largeBatchLimit = 666666 // not verified if this is the best size, maybe different L3 cache size leads to different limit
+const largeBatchLimit = 1000000 // not verified if this is the best size, maybe different L3 cache size leads to different limit
 type Batches struct {
 	batches []*Batch
 }
@@ -191,7 +191,7 @@ func (bs *Batches) Init(b *Batch) {
 	bs.batches = append(bs.batches, b)
 }
 
-func (bs *Batches) GetLength() int {
+func (bs *Batches) GetNumBatches() int {
 	return len(bs.batches)
 }
 
