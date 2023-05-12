@@ -213,8 +213,16 @@ func (bs *Batches) AddValueInZSOffset(value int64, offset int) {
 func (bs *Batches) GetLatestBatch() *Batch {
 	b := bs.batches[len(bs.batches)-1]
 	if b.Length() >= largeBatchLimit {
-		newBatch := New(bs.batches[0].Ro, bs.batches[0].Attrs)
+		newBatch := NewWithSize(bs.batches[0].VectorCount())
+		for i := range bs.batches[0].Vecs {
+			newBatch.Vecs[i] = vector.NewVec(*bs.batches[0].Vecs[i].GetType())
+		}
 		newBatch.Aggs = bs.batches[0].Aggs
+		for i := range bs.batches[0].Aggs {
+			newBatch.Aggs[i] = bs.batches[0].Aggs[i].Dup()
+		}
+		newBatch.Ro = bs.batches[0].Ro
+		newBatch.Attrs = bs.batches[0].Attrs
 		bs.batches = append(bs.batches, newBatch)
 		return newBatch
 	}

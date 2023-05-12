@@ -68,23 +68,25 @@ func Call(idx int, proc *process.Process, arg interface{}, isFirst bool, isLast 
 								anal.Alloc(int64(vec.Size()))
 							}
 						}
-					}
-					currentBat.Aggs = nil
-					for i := range currentBat.Zs { // reset zs
-						currentBat.Zs[i] = 1
+						currentBat.Aggs = nil
+						for j := range currentBat.Zs { // reset zs
+							currentBat.Zs[j] = 1
+						}
 					}
 				}
 			}
 			ctr.state = End
 		case End:
-			currentBat := ctr.batches.GetBatchByIndex(ctr.batchIdx)
-			anal.Output(currentBat, isLast)
-			proc.SetInputBatch(currentBat)
-			ctr.batchIdx++
-			if ctr.batchIdx < ctr.batches.GetNumBatches() {
-				return false, nil
+			if ctr.batches != nil {
+				currentBat := ctr.batches.GetBatchByIndex(ctr.batchIdx)
+				anal.Output(currentBat, isLast)
+				proc.SetInputBatch(currentBat)
+				ctr.batchIdx++
+				if ctr.batchIdx < ctr.batches.GetNumBatches() {
+					return false, nil
+				}
+				ctr.batches = nil
 			}
-			ctr.batches = nil
 			ap.Free(proc, false)
 			return true, nil
 		}
