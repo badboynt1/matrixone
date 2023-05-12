@@ -45,7 +45,8 @@ type container struct {
 	intHashMap *hashmap.IntHashMap
 	strHashMap *hashmap.StrHashMap
 
-	batches *batch.Batches
+	batches  *batch.Batches
+	batchIdx int
 }
 
 type Argument struct {

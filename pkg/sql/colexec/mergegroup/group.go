@@ -41,7 +41,7 @@ func Call(idx int, proc *process.Process, arg interface{}, isFirst bool, isLast 
 	anal := proc.GetAnalyze(idx)
 	anal.Start()
 	defer anal.Stop()
-	index := 0
+
 	for {
 		switch ctr.state {
 		case Build:
@@ -52,34 +52,32 @@ func Call(idx int, proc *process.Process, arg interface{}, isFirst bool, isLast 
 			}
 			ctr.state = Eval
 		case Eval:
-			if ctr.batches == nil {
-				ctr.state = End
-				return false, nil
-			}
-			currentBat := ctr.batches.GetBatchByIndex(index)
-			if ap.NeedEval {
-				for i, agg := range currentBat.Aggs {
-					vec, err := agg.Eval(proc.Mp())
-					if err != nil {
-						ctr.state = End
-						return false, err
+			if ctr.batches != nil {
+				currentBat := ctr.batches.GetBatchByIndex(ctr.batchIdx)
+				if ap.NeedEval {
+					for i, agg := range currentBat.Aggs {
+						vec, err := agg.Eval(proc.Mp())
+						if err != nil {
+							ctr.state = End
+							return false, err
+						}
+						currentBat.Aggs[i] = nil
+						currentBat.Vecs = append(currentBat.Vecs, vec)
+						if vec != nil {
+							anal.Alloc(int64(vec.Size()))
+						}
 					}
-					currentBat.Aggs[i] = nil
-					currentBat.Vecs = append(currentBat.Vecs, vec)
-					if vec != nil {
-						anal.Alloc(int64(vec.Size()))
+					currentBat.Aggs = nil
+					for i := range currentBat.Zs { // reset zs
+						currentBat.Zs[i] = 1
 					}
 				}
-				currentBat.Aggs = nil
-				for i := range currentBat.Zs { // reset zs
-					currentBat.Zs[i] = 1
+				anal.Output(currentBat, isLast)
+				proc.SetInputBatch(currentBat)
+				ctr.batchIdx++
+				if ctr.batchIdx < ctr.batches.GetLength() {
+					return false, nil
 				}
-			}
-			anal.Output(currentBat, isLast)
-			proc.SetInputBatch(currentBat)
-			index++
-			if index < ctr.batches.GetLength() {
-				return false, nil
 			}
 			ctr.state = End
 		case End:
