@@ -16,6 +16,7 @@ package batch
 
 import (
 	"bytes"
+	"github.com/matrixorigin/matrixone/pkg/common/mpool"
 
 	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/container/vector"
@@ -176,4 +177,40 @@ type Batch struct {
 	Zs   []int64
 	Aggs []agg.Agg[any]
 	Ht   any // hash table
+}
+
+// for some large output node like mergegroup, mergesort
+// output a too large batch will cause error (for now , 1 allocation can not be larger than 1g)
+// we need to spilt large batch info small batches
+const largeBatchLimit = 1000000 // not verified if this is the best size, maybe different L3 cache size leads to different limit
+type Batches struct {
+	batches []*Batch
+}
+
+func (bs *Batches) Init(b *Batch) {
+	bs.batches = append(bs.batches, b)
+}
+
+func (bs *Batches) GetLength() int {
+	return len(bs.batches)
+}
+
+func (bs *Batches) GetBatchByIndex(i int) *Batch {
+	return bs.batches[i]
+}
+
+func (bs *Batches) GetLatestBatch() *Batch {
+	b := bs.batches[len(bs.batches)-1]
+	if b.Length() >= largeBatchLimit {
+		newBatch := New(bs.batches[0].Ro, bs.batches[0].Attrs)
+		newBatch.Aggs = bs.batches[0].Aggs
+		return newBatch
+	}
+	return b
+}
+
+func (bs *Batches) Clean(m *mpool.MPool) {
+	for i := range bs.batches {
+		bs.batches[i].Clean(m)
+	}
 }

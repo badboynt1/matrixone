@@ -41,7 +41,7 @@ func Call(idx int, proc *process.Process, arg interface{}, isFirst bool, isLast 
 	anal := proc.GetAnalyze(idx)
 	anal.Start()
 	defer anal.Stop()
-
+	index := 0
 	for {
 		switch ctr.state {
 		case Build:
@@ -52,31 +52,34 @@ func Call(idx int, proc *process.Process, arg interface{}, isFirst bool, isLast 
 			}
 			ctr.state = Eval
 		case Eval:
-			if ctr.bat != nil {
-				if ap.NeedEval {
-					for i, agg := range ctr.bat.Aggs {
-						vec, err := agg.Eval(proc.Mp())
-						if err != nil {
-							ctr.state = End
-							return false, err
-						}
-						ctr.bat.Aggs[i] = nil
-						ctr.bat.Vecs = append(ctr.bat.Vecs, vec)
-						if vec != nil {
-							anal.Alloc(int64(vec.Size()))
-						}
+			currentBat := ctr.batches.GetBatchByIndex(index)
+			if ap.NeedEval {
+				for i, agg := range currentBat.Aggs {
+					vec, err := agg.Eval(proc.Mp())
+					if err != nil {
+						ctr.state = End
+						return false, err
 					}
-					ctr.bat.Aggs = nil
-					for i := range ctr.bat.Zs { // reset zs
-						ctr.bat.Zs[i] = 1
+					currentBat.Aggs[i] = nil
+					currentBat.Vecs = append(currentBat.Vecs, vec)
+					if vec != nil {
+						anal.Alloc(int64(vec.Size()))
 					}
 				}
-				anal.Output(ctr.bat, isLast)
+				currentBat.Aggs = nil
+				for i := range currentBat.Zs { // reset zs
+					currentBat.Zs[i] = 1
+				}
+			}
+			anal.Output(currentBat, isLast)
+			proc.SetInputBatch(currentBat)
+			index++
+			if index < ctr.batches.GetLength() {
+				return false, nil
 			}
 			ctr.state = End
 		case End:
-			proc.SetInputBatch(ctr.bat)
-			ctr.bat = nil
+			ctr.batches = nil
 			ap.Free(proc, false)
 			return true, nil
 		}
@@ -105,7 +108,7 @@ func (ctr *container) build(proc *process.Process, anal process.Analyze, isFirst
 func (ctr *container) process(bat *batch.Batch, proc *process.Process) error {
 	var err error
 
-	if ctr.bat == nil {
+	if ctr.batches == nil {
 		size := 0
 		groupVecsNullable := false
 		for _, vec := range bat.Vecs {
@@ -154,15 +157,18 @@ func (ctr *container) process(bat *batch.Batch, proc *process.Process) error {
 }
 
 func (ctr *container) processH0(bat *batch.Batch, proc *process.Process) error {
-	if ctr.bat == nil {
-		ctr.bat = bat
+	if ctr.batches == nil {
+		ctr.batches.Init(bat)
 		return nil
 	}
 	defer proc.PutBatch(bat)
+
+	currentBat := ctr.batches.GetLatestBatch()
+
 	for _, z := range bat.Zs {
-		ctr.bat.Zs[0] += z
+		currentBat.Zs[0] += z
 	}
-	for i, agg := range ctr.bat.Aggs {
+	for i, agg := range currentBat.Aggs {
 		err := agg.Merge(bat.Aggs[i], 0, 0)
 		if err != nil {
 			return err
@@ -174,7 +180,7 @@ func (ctr *container) processH0(bat *batch.Batch, proc *process.Process) error {
 func (ctr *container) processH8(bat *batch.Batch, proc *process.Process) error {
 	count := bat.Length()
 	itr := ctr.intHashMap.NewIterator()
-	flg := ctr.bat == nil
+	flg := ctr.batches == nil
 	if !flg {
 		defer proc.PutBatch(bat)
 	}
@@ -195,7 +201,7 @@ func (ctr *container) processH8(bat *batch.Batch, proc *process.Process) error {
 		}
 	}
 	if flg {
-		ctr.bat = bat
+		ctr.batches.Init(bat)
 	}
 	return nil
 }
@@ -203,7 +209,7 @@ func (ctr *container) processH8(bat *batch.Batch, proc *process.Process) error {
 func (ctr *container) processHStr(bat *batch.Batch, proc *process.Process) error {
 	count := bat.Length()
 	itr := ctr.strHashMap.NewIterator()
-	flg := ctr.bat == nil
+	flg := ctr.batches == nil
 	if !flg {
 		defer proc.PutBatch(bat)
 	}
@@ -224,12 +230,13 @@ func (ctr *container) processHStr(bat *batch.Batch, proc *process.Process) error
 		}
 	}
 	if flg {
-		ctr.bat = bat
+		ctr.batches.Init(bat)
 	}
 	return nil
 }
 
 func (ctr *container) batchFill(i int, n int, bat *batch.Batch, vals []uint64, hashRows uint64, proc *process.Process) error {
+	currentBat := ctr.batches.GetLatestBatch()
 	cnt := 0
 	copy(ctr.inserted[:n], ctr.zInserted[:n])
 	for k, v := range vals {
@@ -237,24 +244,24 @@ func (ctr *container) batchFill(i int, n int, bat *batch.Batch, vals []uint64, h
 			ctr.inserted[k] = 1
 			hashRows++
 			cnt++
-			ctr.bat.Zs = append(ctr.bat.Zs, 0)
+			currentBat.Zs = append(currentBat.Zs, 0)
 		}
 		ai := int64(v) - 1
-		ctr.bat.Zs[ai] += bat.Zs[i+k]
+		currentBat.Zs[ai] += bat.Zs[i+k]
 	}
 	if cnt > 0 {
-		for j, vec := range ctr.bat.Vecs {
+		for j, vec := range currentBat.Vecs {
 			if err := vec.UnionBatch(bat.Vecs[j], int64(i), cnt, ctr.inserted[:n], proc.Mp()); err != nil {
 				return err
 			}
 		}
-		for _, agg := range ctr.bat.Aggs {
+		for _, agg := range currentBat.Aggs {
 			if err := agg.Grows(cnt, proc.Mp()); err != nil {
 				return err
 			}
 		}
 	}
-	for j, agg := range ctr.bat.Aggs {
+	for j, agg := range currentBat.Aggs {
 		if err := agg.BatchMerge(bat.Aggs[j], int64(i), ctr.inserted[:n], vals); err != nil {
 			return err
 		}

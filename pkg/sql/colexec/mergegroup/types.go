@@ -45,7 +45,7 @@ type container struct {
 	intHashMap *hashmap.IntHashMap
 	strHashMap *hashmap.StrHashMap
 
-	bat *batch.Batch
+	batches *batch.Batches
 }
 
 type Argument struct {
@@ -64,9 +64,9 @@ func (arg *Argument) Free(proc *process.Process, pipelineFailed bool) {
 }
 
 func (ctr *container) cleanBatch(mp *mpool.MPool) {
-	if ctr.bat != nil {
-		ctr.bat.Clean(mp)
-		ctr.bat = nil
+	if ctr.batches != nil {
+		ctr.batches.Clean(mp)
+		ctr.batches = nil
 	}
 }
 
