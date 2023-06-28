@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package dbutils
 
-const (
-	K = 1024
-	M = 1024 * K
-	G = 1024 * M
-	T = 1024 * G
-	P = 1024 * T
+import (
+	"fmt"
+	"path"
 )
+
+const LockSuffix = ".lock"
+
+func MakeLockFileName(dirname string, name string) string {
+	return path.Join(dirname, fmt.Sprintf("%s%s", name, LockSuffix))
+}

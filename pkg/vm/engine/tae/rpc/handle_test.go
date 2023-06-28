@@ -1,4 +1,4 @@
-// Copyright 2022 Matrix Origin
+// Copyright 2021 - 2022 Matrix Origin
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,25 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package disttae
+package rpc
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestZonemapMarshalAndUnmarshal(t *testing.T) {
-	var z Zonemap
-	for i := 0; i < len(z); i++ {
-		z[i] = byte(i)
+func TestHandleGCCache(t *testing.T) {
+	now := time.Now()
+	expired := now.Add(-MAX_TXN_COMMIT_LATENCY).Add(-time.Second)
+
+	handle := Handle{}
+	handle.mu.txnCtxs = map[string]*txnContext{
+		"now": {
+			deadline: now,
+		},
+		"expired": {
+			deadline: expired,
+		},
 	}
+	handle.GCCache(now)
 
-	data, err := z.Marshal()
-	require.NoError(t, err)
-
-	var ret Zonemap
-	err = ret.Unmarshal(data)
-	require.NoError(t, err)
-	require.Equal(t, z, ret)
+	require.Equal(t, 1, len(handle.mu.txnCtxs))
+	require.Nil(t, handle.mu.txnCtxs["expired"])
+	require.NotNil(t, handle.mu.txnCtxs["now"])
 }

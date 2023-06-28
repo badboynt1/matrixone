@@ -745,7 +745,7 @@ func builtInHash(parameters []*vector.Vector, result vector.FunctionResultWrappe
 	}
 
 	fillGroupStr := func(keys [][]byte, vec *vector.Vector, n int, sz int, start int) {
-		data := unsafe.Slice((*byte)(vector.GetPtrAt(vec, 0)), (n+start)*sz)
+		data := unsafe.Slice(vector.GetPtrAt[byte](vec, 0), (n+start)*sz)
 		if !vec.GetNulls().Any() {
 			for i := 0; i < n; i++ {
 				keys[i] = append(keys[i], byte(0))
@@ -1471,6 +1471,8 @@ func builtInLog(parameters []*vector.Vector, result vector.FunctionResultWrapper
 type opBuiltInRand struct {
 	seed *rand.Rand
 }
+
+var _ = newOpBuiltInRand().builtInRand
 
 func newOpBuiltInRand() *opBuiltInRand {
 	return new(opBuiltInRand)

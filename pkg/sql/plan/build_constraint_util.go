@@ -18,11 +18,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/matrixorigin/matrixone/pkg/sql/plan/function"
 
 	"github.com/matrixorigin/matrixone/pkg/catalog"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
+	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	"github.com/matrixorigin/matrixone/pkg/container/types"
+	"github.com/matrixorigin/matrixone/pkg/container/vector"
 	"github.com/matrixorigin/matrixone/pkg/defines"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
 	"github.com/matrixorigin/matrixone/pkg/sql/parsers/tree"
@@ -51,12 +54,20 @@ type dmlTableInfo struct {
 	isClusterTable []bool
 	haveConstraint bool
 	isMulti        bool
+	needAggFilter  bool
 	updateKeys     []map[string]tree.Expr // This slice index correspond to tableDefs
 	oldColPosMap   []map[string]int       // origin table values to their position in derived table
 	newColPosMap   []map[string]int       // insert/update values to their position in derived table
 	nameToIdx      map[string]int         // Mapping of table full path name to tableDefs index，such as： 'tpch.nation -> 0'
 	idToName       map[uint64]string      // Mapping of tableId to full path name of table
 	alias          map[string]int         // Mapping of table aliases to tableDefs array index,If there is no alias, replace it with the original name of the table
+}
+
+var constTextType *plan.Type
+
+func init() {
+	typ := types.T_text.ToType()
+	constTextType = makePlan2Type(&typ)
 }
 
 func getAliasToName(ctx CompilerContext, expr tree.TableExpr, alias string, aliasMap map[string][2]string) {
@@ -141,10 +152,11 @@ func getUpdateTableInfo(ctx CompilerContext, stmt *tree.Update) (*dmlTableInfo, 
 
 	// remove unused table
 	newTblInfo := &dmlTableInfo{
-		nameToIdx: make(map[string]int),
-		idToName:  make(map[uint64]string),
-		alias:     make(map[string]int),
-		isMulti:   tblInfo.isMulti,
+		nameToIdx:     make(map[string]int),
+		idToName:      make(map[uint64]string),
+		alias:         make(map[string]int),
+		isMulti:       tblInfo.isMulti,
+		needAggFilter: tblInfo.needAggFilter,
 	}
 	for alias, columns := range usedTbl {
 		idx := tblInfo.alias[alias]
@@ -188,7 +200,7 @@ func setTableExprToDmlTableInfo(ctx CompilerContext, tbl tree.TableExpr, tblInfo
 	}
 
 	if jionTbl, ok := tbl.(*tree.JoinTableExpr); ok {
-		tblInfo.isMulti = true
+		tblInfo.needAggFilter = true
 		err := setTableExprToDmlTableInfo(ctx, jionTbl.Left, tblInfo, aliasMap, withMap)
 		if err != nil {
 			return err
@@ -318,6 +330,8 @@ func getDmlTableInfo(ctx CompilerContext, tableExprs tree.TableExprs, with *tree
 			return nil, err
 		}
 	}
+	tblInfo.isMulti = len(tblInfo.objRef) > 1
+	tblInfo.needAggFilter = tblInfo.needAggFilter || tblInfo.isMulti
 
 	return tblInfo, nil
 }
@@ -774,6 +788,31 @@ func checkNotNull(ctx context.Context, expr *Expr, tableDef *TableDef, col *ColD
 
 var ForceCastExpr = forceCastExpr
 
+func forceCastExpr2(ctx context.Context, expr *Expr, t2 types.Type, targetType *plan.Expr) (*Expr, error) {
+	if targetType.Typ.Id == 0 {
+		return expr, nil
+	}
+	t1 := makeTypeByPlan2Expr(expr)
+	if t1.Eq(t2) {
+		return expr, nil
+	}
+
+	targetType.Typ.NotNullable = expr.Typ.NotNullable
+	fGet, err := function.GetFunctionByName(ctx, "cast", []types.Type{t1, t2})
+	if err != nil {
+		return nil, err
+	}
+	return &plan.Expr{
+		Expr: &plan.Expr_F{
+			F: &plan.Function{
+				Func: &ObjectRef{Obj: fGet.GetEncodedOverloadID(), ObjName: "cast"},
+				Args: []*Expr{expr, targetType},
+			},
+		},
+		Typ: targetType.Typ,
+	}, nil
+}
+
 func forceCastExpr(ctx context.Context, expr *Expr, targetType *Type) (*Expr, error) {
 	if targetType.Id == 0 {
 		return expr, nil
@@ -818,10 +857,15 @@ func buildValueScan(
 	colToIdx map[string]int,
 ) error {
 	var err error
+
+	proc := builder.compCtx.GetProcess()
 	lastTag := builder.genNewTag()
 	colCount := len(updateColumns)
 	rowsetData := &plan.RowsetData{
 		Cols: make([]*plan.ColData, colCount),
+	}
+	for i := 0; i < colCount; i++ {
+		rowsetData.Cols[i] = new(plan.ColData)
 	}
 	valueScanTableDef := &plan.TableDef{
 		TblId: 0,
@@ -829,46 +873,105 @@ func buildValueScan(
 		Cols:  make([]*plan.ColDef, colCount),
 	}
 	projectList := make([]*Expr, colCount)
+	bat := batch.NewWithSize(len(updateColumns))
 
 	for i, colName := range updateColumns {
 		col := tableDef.Cols[colToIdx[colName]]
+		colTyp := makeTypeByPlan2Type(col.Typ)
+		vec := proc.GetVector(colTyp)
+		bat.Vecs[i] = vec
+		targetTyp := &plan.Expr{
+			Typ: col.Typ,
+			Expr: &plan.Expr_T{
+				T: &plan.TargetType{
+					Typ: col.Typ,
+				},
+			},
+		}
 		var defExpr *Expr
-		rows := make([]*Expr, len(slt.Rows))
 		if isAllDefault {
 			defExpr, err := getDefaultExpr(builder.GetContext(), col)
 			if err != nil {
 				return err
 			}
-			defExpr, err = forceCastExpr(builder.GetContext(), defExpr, col.Typ)
+			defExpr, err = forceCastExpr2(builder.GetContext(), defExpr, colTyp, targetTyp)
 			if err != nil {
 				return err
 			}
 			for j := range slt.Rows {
-				rows[j] = defExpr
+				if err := vector.AppendBytes(vec, nil, true, proc.Mp()); err != nil {
+					bat.Clean(proc.Mp())
+					return err
+				}
+				rowsetData.Cols[i].Data = append(rowsetData.Cols[i].Data, &plan.RowsetExpr{
+					Pos:    -1,
+					RowPos: int32(j),
+					Expr:   defExpr,
+				})
 			}
 		} else {
 			binder := NewDefaultBinder(builder.GetContext(), nil, nil, col.Typ, nil)
 			for j, r := range slt.Rows {
+				if nv, ok := r[i].(*tree.NumVal); ok {
+					canInsert, err := util.SetInsertValue(proc, nv, vec)
+					if err != nil {
+						bat.Clean(proc.Mp())
+						return err
+					}
+					if canInsert {
+						continue
+					}
+				}
+
+				if err := vector.AppendBytes(vec, nil, true, proc.Mp()); err != nil {
+					bat.Clean(proc.Mp())
+					return err
+				}
 				if _, ok := r[i].(*tree.DefaultVal); ok {
 					defExpr, err = getDefaultExpr(builder.GetContext(), col)
 					if err != nil {
+						bat.Clean(proc.Mp())
 						return err
 					}
+				} else if nv, ok := r[i].(*tree.ParamExpr); ok {
+					rowsetData.Cols[i].Data = append(rowsetData.Cols[i].Data, &plan.RowsetExpr{
+						RowPos: int32(j),
+						Pos:    int32(nv.Offset),
+						Expr: &plan.Expr{
+							Typ: constTextType,
+							Expr: &plan.Expr_P{
+								P: &plan.ParamRef{
+									Pos: int32(nv.Offset),
+								},
+							},
+						},
+					})
+					continue
 				} else {
 					defExpr, err = binder.BindExpr(r[i], 0, true)
 					if err != nil {
+						bat.Clean(proc.Mp())
 						return err
 					}
 				}
-				defExpr, err = forceCastExpr(builder.GetContext(), defExpr, col.Typ)
+				defExpr, err = forceCastExpr2(builder.GetContext(), defExpr, colTyp, targetTyp)
 				if err != nil {
 					return err
 				}
-				rows[j] = defExpr
+				if nv, ok := r[i].(*tree.ParamExpr); ok {
+					rowsetData.Cols[i].Data = append(rowsetData.Cols[i].Data, &plan.RowsetExpr{
+						RowPos: int32(j),
+						Pos:    int32(nv.Offset),
+						Expr:   defExpr,
+					})
+					continue
+				}
+				rowsetData.Cols[i].Data = append(rowsetData.Cols[i].Data, &plan.RowsetExpr{
+					Pos:    -1,
+					RowPos: int32(j),
+					Expr:   defExpr,
+				})
 			}
-		}
-		rowsetData.Cols[i] = &plan.ColData{
-			Data: rows,
 		}
 		colName := fmt.Sprintf("column_%d", i) // like MySQL
 		valueScanTableDef.Cols[i] = &plan.ColDef{
@@ -876,7 +979,7 @@ func buildValueScan(
 			Name:  colName,
 			Typ:   col.Typ,
 		}
-		projectList[i] = &plan.Expr{
+		expr := &plan.Expr{
 			Typ: col.Typ,
 			Expr: &plan.Expr_Col{
 				Col: &plan.ColRef{
@@ -885,20 +988,30 @@ func buildValueScan(
 				},
 			},
 		}
+		projectList[i] = expr
 	}
-	info.rootId = builder.appendNode(&plan.Node{
+
+	bat.SetZs(len(slt.Rows), proc.Mp())
+	nodeId, _ := uuid.NewUUID()
+	scanNode := &plan.Node{
 		NodeType:    plan.Node_VALUE_SCAN,
 		RowsetData:  rowsetData,
 		TableDef:    valueScanTableDef,
 		BindingTags: []int32{lastTag},
-	}, bindCtx)
+		Uuid:        nodeId[:],
+	}
+	if builder.isPrepareStatement {
+		proc.SetPrepareBatch(bat)
+	} else {
+		proc.SetValueScanBatch(nodeId, bat)
+	}
+	info.rootId = builder.appendNode(scanNode, bindCtx)
 	err = builder.addBinding(info.rootId, tree.AliasClause{
 		Alias: "_ValueScan",
 	}, bindCtx)
 	if err != nil {
 		return err
 	}
-
 	lastTag = builder.genNewTag()
 	info.rootId = builder.appendNode(&plan.Node{
 		NodeType:    plan.Node_PROJECT,
@@ -906,6 +1019,5 @@ func buildValueScan(
 		Children:    []int32{info.rootId},
 		BindingTags: []int32{lastTag},
 	}, bindCtx)
-
 	return nil
 }

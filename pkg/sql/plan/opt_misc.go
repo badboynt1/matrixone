@@ -27,6 +27,7 @@ func (builder *QueryBuilder) removeSimpleProjections(nodeID int32, parentType pl
 	increaseRefCntForExprList(node.GroupBy, colRefCnt)
 	increaseRefCntForExprList(node.GroupingSet, colRefCnt)
 	increaseRefCntForExprList(node.AggList, colRefCnt)
+	increaseRefCntForExprList(node.WinSpecList, colRefCnt)
 	for i := range node.OrderBy {
 		increaseRefCnt(node.OrderBy[i].Expr, colRefCnt)
 	}
@@ -48,7 +49,7 @@ func (builder *QueryBuilder) removeSimpleProjections(nodeID int32, parentType pl
 			projMap[ref] = expr
 		}
 
-	case plan.Node_AGG, plan.Node_PROJECT:
+	case plan.Node_AGG, plan.Node_PROJECT, plan.Node_WINDOW:
 		for i, childID := range node.Children {
 			newChildID, childProjMap := builder.removeSimpleProjections(childID, node.NodeType, false, colRefCnt)
 			node.Children[i] = newChildID
@@ -73,6 +74,7 @@ func (builder *QueryBuilder) removeSimpleProjections(nodeID int32, parentType pl
 	removeProjectionsForExprList(node.GroupBy, projMap)
 	removeProjectionsForExprList(node.GroupingSet, projMap)
 	removeProjectionsForExprList(node.AggList, projMap)
+	removeProjectionsForExprList(node.WinSpecList, projMap)
 	for i := range node.OrderBy {
 		node.OrderBy[i].Expr = removeProjectionsForExpr(node.OrderBy[i].Expr, projMap)
 	}
@@ -171,8 +173,16 @@ func removeProjectionsForExpr(expr *plan.Expr, projMap map[[2]int32]*plan.Expr) 
 		for i, arg := range ne.F.Args {
 			ne.F.Args[i] = removeProjectionsForExpr(arg, projMap)
 		}
-	}
 
+	case *plan.Expr_W:
+		ne.W.WindowFunc = removeProjectionsForExpr(ne.W.WindowFunc, projMap)
+		for i, arg := range ne.W.PartitionBy {
+			ne.W.PartitionBy[i] = removeProjectionsForExpr(arg, projMap)
+		}
+		for i, order := range ne.W.OrderBy {
+			ne.W.OrderBy[i].Expr = removeProjectionsForExpr(order.Expr, projMap)
+		}
+	}
 	return expr
 }
 
@@ -206,6 +216,29 @@ func (builder *QueryBuilder) pushdownFilters(nodeID int32, filters []*plan.Expr,
 
 		node.Children[0] = childID
 
+	case plan.Node_WINDOW:
+		windowTag := node.BindingTags[0]
+
+		for _, filter := range filters {
+			if !containsTag(filter, windowTag) {
+				canPushdown = append(canPushdown, replaceColRefs(filter, windowTag, node.WinSpecList))
+			} else {
+				node.FilterList = append(node.FilterList, filter)
+			}
+		}
+
+		childID, cantPushdownChild := builder.pushdownFilters(node.Children[0], canPushdown, separateNonEquiConds)
+
+		if len(cantPushdownChild) > 0 {
+			childID = builder.appendNode(&plan.Node{
+				NodeType:   plan.Node_FILTER,
+				Children:   []int32{node.Children[0]},
+				FilterList: cantPushdownChild,
+			}, nil)
+		}
+
+		node.Children[0] = childID
+
 	case plan.Node_FILTER:
 		canPushdown = filters
 		for _, filter := range node.FilterList {
@@ -222,12 +255,12 @@ func (builder *QueryBuilder) pushdownFilters(nodeID int32, filters []*plan.Expr,
 		}
 
 	case plan.Node_JOIN:
-		leftTags := make(map[int32]*Binding)
+		leftTags := make(map[int32]any)
 		for _, tag := range builder.enumerateTags(node.Children[0]) {
 			leftTags[tag] = nil
 		}
 
-		rightTags := make(map[int32]*Binding)
+		rightTags := make(map[int32]any)
 		for _, tag := range builder.enumerateTags(node.Children[1]) {
 			rightTags[tag] = nil
 		}
@@ -414,7 +447,7 @@ func (builder *QueryBuilder) pushdownFilters(nodeID int32, filters []*plan.Expr,
 		//when onlist is empty, it will be a cross join, performance will be very poor
 		//in this situation, we put the non equal conds in the onlist and go loop join
 		//todo: when equal conds and non equal conds both exists, put them in the on list and go hash equal join
-		if len(node.OnList) == 0 {
+		if node.JoinType == plan.Node_INNER && len(node.OnList) == 0 {
 			// for tpch q22, do not change the plan for now. will fix in the future
 			leftStats := builder.qry.Nodes[node.Children[0]].Stats
 			rightStats := builder.qry.Nodes[node.Children[1]].Stats
@@ -602,4 +635,86 @@ func (builder *QueryBuilder) remapHavingClause(expr *plan.Expr, groupTag, aggreg
 			builder.remapHavingClause(arg, groupTag, aggregateTag, groupSize)
 		}
 	}
+}
+
+func (builder *QueryBuilder) remapWindowClause(expr *plan.Expr, windowTag int32, projectionSize int32) {
+	switch exprImpl := expr.Expr.(type) {
+	case *plan.Expr_Col:
+		if exprImpl.Col.RelPos == windowTag {
+			exprImpl.Col.Name = builder.nameByColRef[[2]int32{windowTag, exprImpl.Col.ColPos}]
+			exprImpl.Col.RelPos = -1
+			exprImpl.Col.ColPos += projectionSize
+		}
+
+	case *plan.Expr_F:
+		for _, arg := range exprImpl.F.Args {
+			builder.remapWindowClause(arg, windowTag, projectionSize)
+		}
+	}
+}
+
+func getJoinCondLeftCol(cond *Expr, leftTags map[int32]any) *plan.Expr_Col {
+	fun, ok := cond.Expr.(*plan.Expr_F)
+	if !ok || fun.F.Func.ObjName != "=" {
+		return nil
+	}
+	leftCol, ok := fun.F.Args[0].Expr.(*plan.Expr_Col)
+	if !ok {
+		return nil
+	}
+	rightCol, ok := fun.F.Args[1].Expr.(*plan.Expr_Col)
+	if !ok {
+		return nil
+	}
+	if _, ok := leftTags[leftCol.Col.RelPos]; ok {
+		return leftCol
+	}
+	if _, ok := leftTags[rightCol.Col.RelPos]; ok {
+		return rightCol
+	}
+	return nil
+}
+
+// if join cond is a=b and a=c, we can remove a=c to improve join performance
+func (builder *QueryBuilder) removeRedundantJoinCond(nodeID int32) int32 {
+	node := builder.qry.Nodes[nodeID]
+	if len(node.Children) > 0 {
+		for i, child := range node.Children {
+			node.Children[i] = builder.removeRedundantJoinCond(child)
+		}
+	} else {
+		return nodeID
+	}
+	if !builder.IsEquiJoin(node) {
+		return nodeID
+	}
+
+	leftTags := make(map[int32]any)
+	for _, tag := range builder.enumerateTags(node.Children[0]) {
+		leftTags[tag] = nil
+	}
+
+	rightTags := make(map[int32]any)
+	for _, tag := range builder.enumerateTags(node.Children[1]) {
+		rightTags[tag] = nil
+	}
+
+	newOnList := make([]*Expr, 0, len(node.OnList))
+	colMap := make(map[[2]int32]int32)
+	for _, expr := range node.OnList {
+		if equi, _ := isEquiCond(expr, leftTags, rightTags); equi {
+			col := getJoinCondLeftCol(expr, leftTags)
+			if col != nil {
+				if _, ok := colMap[[2]int32{col.Col.RelPos, col.Col.ColPos}]; ok {
+					continue
+				} else {
+					colMap[[2]int32{col.Col.RelPos, col.Col.ColPos}] = 0
+				}
+			}
+		}
+		newOnList = append(newOnList, expr)
+	}
+
+	node.OnList = newOnList
+	return nodeID
 }

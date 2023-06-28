@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/matrixorigin/matrixone/pkg/pb/plan"
+
 	"github.com/matrixorigin/matrixone/pkg/catalog"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/container/bytejson"
@@ -73,14 +75,55 @@ func MoTableRows(ivecs []*vector.Vector, result vector.FunctionResultWrapper, pr
 			if err != nil {
 				return err
 			}
-			rel, err = dbo.Relation(ctx, tblStr)
+			rel, err = dbo.Relation(ctx, tblStr, nil)
 			if err != nil {
 				return err
 			}
-			rel.Ranges(ctx, nil)
-			rows, err := rel.Rows(ctx)
+
+			// get the table definition information and check whether the current table is a partition table
+			engineDefs, err := rel.TableDefs(ctx)
 			if err != nil {
 				return err
+			}
+			var partitionInfo *plan.PartitionByDef
+			for _, def := range engineDefs {
+				if partitionDef, ok := def.(*engine.PartitionDef); ok {
+					if partitionDef.Partitioned > 0 {
+						p := &plan.PartitionByDef{}
+						err = p.UnMarshalPartitionInfo(([]byte)(partitionDef.Partition))
+						if err != nil {
+							return err
+						}
+						partitionInfo = p
+					}
+				}
+			}
+
+			var rows int64
+
+			// check if the current table is partitioned
+			if partitionInfo != nil {
+				var prel engine.Relation
+				var prows int64
+				// for partition table,  the table rows is equal to the sum of the partition tables.
+				for _, partitionTable := range partitionInfo.PartitionTableNames {
+					prel, err = dbo.Relation(ctx, partitionTable, nil)
+					if err != nil {
+						return err
+					}
+					prel.Ranges(ctx, nil)
+					prows, err = prel.Rows(ctx)
+					if err != nil {
+						return err
+					}
+					rows += prows
+				}
+			} else {
+				rel.Ranges(ctx, nil)
+				rows, err = rel.Rows(ctx)
+				if err != nil {
+					return err
+				}
 			}
 
 			if err = rs.Append(rows, false); err != nil {
@@ -125,15 +168,55 @@ func MoTableSize(ivecs []*vector.Vector, result vector.FunctionResultWrapper, pr
 			if err != nil {
 				return err
 			}
-			rel, err = dbo.Relation(ctx, tblStr)
+			rel, err = dbo.Relation(ctx, tblStr, nil)
 			if err != nil {
 				return err
 			}
 
-			rel.Ranges(ctx, nil)
-			size, err := rel.Size(ctx, AllColumns)
+			// get the table definition information and check whether the current table is a partition table
+			engineDefs, err := rel.TableDefs(ctx)
 			if err != nil {
 				return err
+			}
+			var partitionInfo *plan.PartitionByDef
+			for _, def := range engineDefs {
+				if partitionDef, ok := def.(*engine.PartitionDef); ok {
+					if partitionDef.Partitioned > 0 {
+						p := &plan.PartitionByDef{}
+						err = p.UnMarshalPartitionInfo(([]byte)(partitionDef.Partition))
+						if err != nil {
+							return err
+						}
+						partitionInfo = p
+					}
+				}
+			}
+
+			var size int64
+
+			// check if the current table is partitioned
+			if partitionInfo != nil {
+				var prel engine.Relation
+				var psize int64
+				// for partition table, the table size is equal to the sum of the partition tables.
+				for _, partitionTable := range partitionInfo.PartitionTableNames {
+					prel, err = dbo.Relation(ctx, partitionTable, nil)
+					if err != nil {
+						return err
+					}
+					prel.Ranges(ctx, nil)
+					psize, err = prel.Size(ctx, AllColumns)
+					if err != nil {
+						return err
+					}
+					size += psize
+				}
+			} else {
+				rel.Ranges(ctx, nil)
+				size, err = rel.Size(ctx, AllColumns)
+				if err != nil {
+					return err
+				}
 			}
 			if err = rs.Append(size, false); err != nil {
 				return err
@@ -196,7 +279,7 @@ func moTableColMaxMinImpl(fn string, ivecs []*vector.Vector, result vector.Funct
 			if err != nil {
 				return err
 			}
-			rel, err := db.Relation(proc.Ctx, tblStr)
+			rel, err := db.Relation(proc.Ctx, tblStr, nil)
 			if err != nil {
 				return err
 			}

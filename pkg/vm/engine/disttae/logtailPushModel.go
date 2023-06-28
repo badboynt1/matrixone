@@ -16,6 +16,8 @@ package disttae
 
 import (
 	"context"
+	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/common/mpool"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,42 +37,33 @@ import (
 )
 
 const (
-	// each periodToCheckTxnTimestamp, we check if we have received enough log for a new txn.
-	// If still not within maxBlockTimeToNewTransaction, the transaction creation fails.
-	maxBlockTimeToNewTransaction = 1 * time.Minute
-	periodToCheckTxnTimestamp    = 1 * time.Millisecond
-
-	// if we didn't receive response from dn log tail server within time maxTimeToWaitServerResponse.
-	// we assume that client has lost connect to server and will start a reconnect.
+	// reconnection related constants.
+	// maxTimeToWaitServerResponse : max time to wait for server response. if time exceed, do reconnection.
+	// retryReconnect : if reconnect dn failed. push client will retry after time retryReconnect.
 	maxTimeToWaitServerResponse = 60 * time.Second
+	retryReconnect              = 20 * time.Millisecond
 
-	// once we reconnect dn failed. we will retry after time retryReconnect.
-	retryReconnect = 20 * time.Millisecond
-
-	// max number of subscribe request we allowed per second.
+	// push client related constants.
+	// maxSubscribeRequestPerSecond : max number of subscribe request we allowed per second.
+	// defaultRequestDeadline : default deadline for every request (subscribe and unsubscribe).
 	maxSubscribeRequestPerSecond = 10000
+	defaultRequestDeadline       = 2 * time.Minute
 
-	// once we send a table subscribe request, we check table subscribe status each periodToCheckTableSubscribeSucceed.
-	// If check time exceeds maxTimeToCheckTableSubscribeSucceed, print debug log and return error.
+	// subscribe related constants.
+	// periodToCheckTableSubscribeSucceed : check table subscribe status period after push client send a subscribe request.
+	// maxTimeToCheckTableSubscribeSucceed : max time to wait for table subscribe succeed. if time exceed, return error.
 	periodToCheckTableSubscribeSucceed  = 1 * time.Millisecond
 	maxTimeToCheckTableSubscribeSucceed = 10 * time.Second
 	maxCheckRangeTableSubscribeSucceed  = int(maxTimeToCheckTableSubscribeSucceed / periodToCheckTableSubscribeSucceed)
 
-	// default deadline for context to send a rpc message.
-	defaultTimeOutToSubscribeTable = 2 * time.Minute
-
-	// each unsubscribeProcessTicker, we scan the table subscribe record.
-	// to unsubscribe the table which was unused for a long time (more than unsubscribeTimer).
+	// unsubscribe process related constants.
+	// unsubscribe process scan the table every 20 minutes, and unsubscribe table which was unused for 1 hour.
 	unsubscribeProcessTicker = 20 * time.Minute
 	unsubscribeTimer         = 1 * time.Hour
-)
 
-const (
-	// routine number to consume log tail.
-	parallelNums = 4
-
-	// each routine's log tail buffer size.
-	bufferLength = 128
+	// log tail consumer related constants.
+	consumerNumber       = 4
+	consumerBufferLength = 256
 )
 
 // pushClient is a structure responsible for all operations related to the log tail push model.
@@ -82,7 +75,7 @@ const (
 //	 3. subscribeTable	   : send a table subscribe request to service.
 //	 4. unsubscribeTable	   : send a table un subscribe request to service.
 //	 5. firstTimeConnectToLogTailServer : subscribe mo_databases, mo_tables, mo_columns
-//	 6. receiveTableLogTailContinuously   : start (1 + parallelNums) routine to receive log tail from service.
+//	 6. receiveTableLogTailContinuously   : start (1 + consumerNumber) routine to receive log tail from service.
 //	-----------------------------------------------------------------------------------------------------
 type pushClient struct {
 	// Responsible for sending subscription / unsubscription requests to the service
@@ -103,6 +96,7 @@ func (client *pushClient) init(
 	serviceAddr string,
 	timestampWaiter client.TimestampWaiter) error {
 	client.timestampWaiter = timestampWaiter
+
 	client.receivedLogTailTime.initLogTailTimestamp(timestampWaiter)
 	client.subscribed.initTableSubscribeRecord()
 
@@ -116,26 +110,31 @@ func (client *pushClient) init(
 	return nil
 }
 
-func (client *pushClient) checkTxnTimeIsLegal(
-	ctx context.Context, txnTime timestamp.Timestamp) error {
-	if client.receivedLogTailTime.greatEq(txnTime) {
-		return nil
+func (client *pushClient) validLogTailMustApplied(snapshotTS timestamp.Timestamp) {
+	// At the time of transaction creation, a ts is obtained as the start timestamp of the transaction.
+	// To ensure that the complete data is visible at the start of the transaction, the logtail of
+	// all < snapshot ts is waited until it is applied when the transaction is created inside the txn client.
+	//
+	// Inside the txn client, there is a waiter waiting for the LogTail to be applied, which will continuously
+	// receive the ts applied by the pushClient, and then the transaction will use the maximum applied LogTail
+	// ts currently received + 1 as the transaction's snapshot ts to ensure that the transaction can see the
+	// log tails corresponding to the max(applied log tail ts in txn client).
+	//
+	// So here we need to use snapshotTS.Prev() to check.
+	if client.receivedLogTailTime.greatEq(snapshotTS.Prev()) {
+		return
 	}
-	ticker := time.NewTicker(periodToCheckTxnTimestamp)
-	defer ticker.Stop()
 
-	for i := maxBlockTimeToNewTransaction; i > 0; i -= periodToCheckTxnTimestamp {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			if client.receivedLogTailTime.greatEq(txnTime) {
-				return nil
-			}
-		}
+	// If reconnect, receivedLogTailTime will reset. But latestAppliedLogTailTS is always keep the latest applied
+	// logtail ts.
+	ts := client.receivedLogTailTime.latestAppliedLogTailTS.Load()
+	if ts != nil && ts.GreaterEq(snapshotTS.Prev()) {
+		return
 	}
-	logutil.Errorf("new txn failed because lack of enough log tail. txn time is [%s]", txnTime.String())
-	return moerr.NewTxnError(ctx, "new txn failed. please retry")
+	panic(fmt.Sprintf("BUG: all log tail must be applied before %s, received applied %s, last applied %+v",
+		snapshotTS.Prev().DebugString(),
+		client.receivedLogTailTime.getTimestamp().DebugString(),
+		ts))
 }
 
 // TryToSubscribeTable subscribe a table and block until subscribe succeed.
@@ -204,7 +203,7 @@ func (client *pushClient) subscribeTable(
 		if err != nil {
 			return err
 		}
-		logutil.Infof("send subscribe tbl[db: %d, tbl: %d] request succeed", tblId.DbId, tblId.TbId)
+		logutil.Debugf("[log-tail-push-client] send subscribe tbl[db: %d, tbl: %d] request succeed", tblId.DbId, tblId.TbId)
 		return nil
 	}
 }
@@ -220,7 +219,7 @@ func (client *pushClient) unsubscribeTable(
 		if err != nil {
 			return err
 		}
-		logutil.Infof("send unsubscribe tbl[db: %d, tbl: %d] request succeed", tblId.DbId, tblId.TbId)
+		logutil.Debugf("[log-tail-push-client] send unsubscribe tbl[db: %d, tbl: %d] request succeed", tblId.DbId, tblId.TbId)
 		return nil
 	}
 }
@@ -248,125 +247,146 @@ func (client *pushClient) firstTimeConnectToLogTailServer(
 	close(ch)
 
 	if err != nil {
-		logutil.Errorf("connect to dn log tail server failed")
+		logutil.Errorf("[log-tail-push-client] connect to dn log tail server failed")
 	}
 	return err
 }
 
-func (client *pushClient) receiveTableLogTailContinuously(ctx context.Context, e *Engine) {
-	reconnectErr := make(chan error)
+func (client *pushClient) receiveTableLogTailContinuously(ctx context.Context, e *Engine, mp *mpool.MPool) {
+	connectMsg := make(chan error)
 
-	// init isLastReconnectRoutineClean as true.
-	// and once it was false, we should clean reconnectErr before we do reconnect action.
-	// it means the last reconnection failed but not because we get an error from this channel.
-	// if not clean, it will cause some go-routine hang up.
-	isLastReconnectRoutineClean := false
+	// we should always make sure that we have received connection message from `connectMsg` channel if we want to do reconnect.
+	// if not, it will cause some goroutine leak.
+	hasReceivedConnectionMsg := false
 
 	go func() {
 		for {
 			// new parallelNums routine to consume log tails.
-			errChan := make(chan error, parallelNums)
-			receiver := make([]routineController, parallelNums)
+			consumeErr := make(chan error, consumerNumber)
+			receiver := make([]routineController, consumerNumber)
 			for i := range receiver {
-				receiver[i] = createRoutineToConsumeLogTails(ctx, i, bufferLength, e, errChan)
+				receiver[i] = createRoutineToConsumeLogTails(ctx, i, consumerBufferLength, e, consumeErr)
 			}
 
 			ch := make(chan logTailSubscriberResponse, 1)
-			// a dead loop to receive log, if lost connect, should reconnect.
+
+			// A dead loop to receive log tail response from log tail service.
+			// if any error happened, we should do reconnection.
 			for {
 				deadline, cancel := context.WithTimeout(ctx, maxTimeToWaitServerResponse)
 				select {
-				case <-deadline.Done():
-					// max wait time is out.
-					goto cleanAndReconnect
-
-				case ch <- client.subscriber.receiveResponse():
+				case ch <- client.subscriber.receiveResponse(deadline):
 					// receive a response from log tail service.
+					client.subscriber.receivedResp = nil
 					cancel()
 
-				case err := <-errChan:
+					resp := <-ch
+					if resp.err != nil {
+						// POSSIBLE ERROR: context deadline exceeded, rpc closed, decode error.
+						logutil.Errorf("[log-tail-push-client] receive an error from log tail client, err : '%s'.", resp.err)
+						goto cleanAndReconnect
+					}
+
+					response := resp.response
+					// consume subscribe response
+					if sResponse := response.GetSubscribeResponse(); sResponse != nil {
+						if err := distributeSubscribeResponse(
+							ctx, e, sResponse, receiver); err != nil {
+							logutil.Errorf("[log-tail-push-client] distribute subscribe response failed, err : '%s'.", err)
+							goto cleanAndReconnect
+						}
+						continue
+					}
+
+					// consume update response
+					if upResponse := response.GetUpdateResponse(); upResponse != nil {
+						if err := distributeUpdateResponse(
+							ctx, e, upResponse, receiver); err != nil {
+							logutil.Errorf("[log-tail-push-client] distribute update response failed, err : '%s'.", err)
+							goto cleanAndReconnect
+						}
+						continue
+					}
+
+					// consume unsubscribe response
+					if unResponse := response.GetUnsubscribeResponse(); unResponse != nil {
+						if err := distributeUnSubscribeResponse(
+							ctx, e, unResponse, receiver); err != nil {
+							logutil.Errorf("[log-tail-push-client] distribute unsubscribe response failed, err : '%s'.", err)
+							goto cleanAndReconnect
+						}
+						continue
+					}
+
+				case err := <-consumeErr:
 					// receive an error from sub-routine to consume log.
-					logutil.ErrorField(err)
+					logutil.Errorf("[log-tail-push-client] consume log tail failed. err '%s'", err)
 					cancel()
 					goto cleanAndReconnect
 
-				case err := <-reconnectErr:
+				case err := <-connectMsg:
 					cancel()
-					isLastReconnectRoutineClean = true
+					hasReceivedConnectionMsg = true
 					if err != nil {
-						logutil.Errorf("connect to dn log tail service failed, reason: %s", err)
+						logutil.Errorf("[log-tail-push-client] connect to dn log tail service failed, reason: %s", err)
 						goto cleanAndReconnect
 					}
 
-					client.receivedLogTailTime.ready.Store(true)
-					client.subscriber.setReady()
-					continue
-				}
+					// we should always make sure that all the log tail consume routines have updated its timestamp.
+					for client.receivedLogTailTime.getTimestamp().IsEmpty() {
+						time.Sleep(time.Millisecond * 2)
+					}
 
-				resp := <-ch
-				if resp.err != nil {
-					// may rpc close error or decode error.
-					logutil.ErrorField(resp.err)
+					e.setPushClientStatus(true)
+					logutil.Infof("[log-tail-push-client] connect to dn log tail service succeed.")
+					continue
+
+				case <-ctx.Done():
+					cancel()
 					goto cleanAndReconnect
-				}
-
-				response := resp.response
-				// consume subscribe response
-				if sResponse := response.GetSubscribeResponse(); sResponse != nil {
-					if err := distributeSubscribeResponse(
-						ctx, e, sResponse, receiver); err != nil {
-						logutil.ErrorField(err)
-						goto cleanAndReconnect
-					}
-					continue
-				}
-
-				// consume update response
-				if upResponse := response.GetUpdateResponse(); upResponse != nil {
-					if err := distributeUpdateResponse(
-						ctx, e, upResponse, receiver); err != nil {
-						logutil.ErrorField(err)
-						goto cleanAndReconnect
-					}
-					continue
-				}
-
-				// consume unsubscribe response
-				if unResponse := response.GetUnsubscribeResponse(); unResponse != nil {
-					if err := distributeUnSubscribeResponse(
-						ctx, e, unResponse, receiver); err != nil {
-						logutil.ErrorField(err)
-						goto cleanAndReconnect
-					}
-					continue
 				}
 			}
 
 		cleanAndReconnect:
+			logutil.Infof("[log-tail-push-client] start to clean log tail consume routines")
 			for _, r := range receiver {
 				r.close()
 			}
-			if !isLastReconnectRoutineClean {
-				<-reconnectErr
+			if !hasReceivedConnectionMsg {
+				<-connectMsg
+			}
+			e.setPushClientStatus(false)
+
+			if ctx.Err() != nil {
+				logutil.Infof("[log-tail-push-client] context is done, exit log tail receive routine.")
+				return
 			}
 
-			logutil.Infof("start to reconnect to dn log tail service")
+			logutil.Infof("[log-tail-push-client] clean finished, start to reconnect to dn log tail service")
 			for {
 				dnLogTailServerBackend := e.getDNServices()[0].LogTailServiceAddress
 				if err := client.init(dnLogTailServerBackend, client.timestampWaiter); err != nil {
-					logutil.Error("rebuild the cn log tail client failed.")
+					logutil.Errorf("[log-tail-push-client] rebuild the cn log tail client failed, reason: %s", err)
 					time.Sleep(retryReconnect)
 					continue
 				}
 
-				// once we reconnect succeed, should clean partition here.
-				e.cleanMemoryTable()
+				// set all the running transaction to be aborted.
+				e.abortAllRunningTxn()
 
-				isLastReconnectRoutineClean = false
+				// clean memory table.
+				err := e.init(ctx, mp)
+				if err != nil {
+					logutil.Errorf("[log-tail-push-client] rebuild memory-table failed, err : '%s'.", err)
+					time.Sleep(retryReconnect)
+					continue
+				}
+
+				hasReceivedConnectionMsg = false
 
 				go func() {
-					err := client.firstTimeConnectToLogTailServer(ctx)
-					reconnectErr <- err
+					er := client.firstTimeConnectToLogTailServer(ctx)
+					connectMsg <- er
 				}()
 				break
 			}
@@ -374,14 +394,21 @@ func (client *pushClient) receiveTableLogTailContinuously(ctx context.Context, e
 	}()
 
 	err := client.firstTimeConnectToLogTailServer(ctx)
-	reconnectErr <- err
+	connectMsg <- err
 }
 
 func (client *pushClient) unusedTableGCTicker(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(unsubscribeProcessTicker)
 		for {
-			<-ticker.C
+			select {
+			case <-ctx.Done():
+				logutil.Infof("[log-tail-push-client] unsubscribe process exit.")
+				ticker.Stop()
+				return
+
+			case <-ticker.C:
+			}
 
 			t := time.Now()
 			client.subscribed.mutex.Lock()
@@ -396,7 +423,6 @@ func (client *pushClient) unusedTableGCTicker(ctx context.Context) {
 					}
 					if !v.isDeleting && !v.latestTime.After(shouldClean) {
 						if err := client.unsubscribeTable(ctx, api.TableID{DbId: k.db, TbId: k.tbl}); err == nil {
-							logutil.Infof("sign tbl[dbId: %d, tblId: %d] unsubscribing", k.db, k.tbl)
 							client.subscribed.m[k] = tableSubscribeStatus{
 								isDeleting: true,
 								latestTime: v.latestTime,
@@ -461,31 +487,37 @@ func (s *subscribedTable) setTableSubscribe(dbId, tblId uint64) {
 		isDeleting: false,
 		latestTime: time.Now(),
 	}
-	logutil.Infof("subscribe tbl[db: %d, tbl: %d] succeed", dbId, tblId)
+	logutil.Debugf("subscribe tbl[db: %d, tbl: %d] succeed", dbId, tblId)
 }
 
 func (s *subscribedTable) setTableUnsubscribe(dbId, tblId uint64) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	delete(s.m, subscribeID{dbId, tblId})
-	logutil.Infof("unsubscribe tbl[db: %d, tbl: %d] succeed", dbId, tblId)
+	logutil.Debugf("unsubscribe tbl[db: %d, tbl: %d] succeed", dbId, tblId)
 }
 
 // syncLogTailTimestamp is a global log tail timestamp for a cn node.
 // support `getTimestamp()` method to get time of last received log.
 type syncLogTailTimestamp struct {
-	timestampWaiter client.TimestampWaiter
-	ready           atomic.Bool
-	tList           []atomic.Pointer[timestamp.Timestamp]
+	timestampWaiter        client.TimestampWaiter
+	ready                  atomic.Bool
+	tList                  []atomic.Pointer[timestamp.Timestamp]
+	latestAppliedLogTailTS atomic.Pointer[timestamp.Timestamp]
 }
 
 func (r *syncLogTailTimestamp) initLogTailTimestamp(timestampWaiter client.TimestampWaiter) {
+	ts := r.getTimestamp()
+	if !ts.IsEmpty() {
+		r.latestAppliedLogTailTS.Store(&ts)
+	}
+
 	r.timestampWaiter = timestampWaiter
 	r.ready.Store(false)
 	if len(r.tList) == 0 {
 		r.tList = make(
 			[]atomic.Pointer[timestamp.Timestamp],
-			parallelNums+1,
+			consumerNumber+1,
 		)
 	}
 	for i := range r.tList {
@@ -510,7 +542,10 @@ func (r *syncLogTailTimestamp) getTimestamp() timestamp.Timestamp {
 
 func (r *syncLogTailTimestamp) updateTimestamp(index int, newTimestamp timestamp.Timestamp) {
 	r.tList[index].Store(&newTimestamp)
-	r.timestampWaiter.NotifyLatestCommitTS(r.getTimestamp())
+	if r.ready.Load() {
+		ts := r.getTimestamp()
+		r.timestampWaiter.NotifyLatestCommitTS(ts)
+	}
 }
 
 func (r *syncLogTailTimestamp) greatEq(txnTime timestamp.Timestamp) bool {
@@ -525,7 +560,8 @@ type logTailSubscriber struct {
 	dnNodeID      int
 	logTailClient *service.LogtailClient
 
-	ready bool
+	ready        bool
+	receivedResp *logTailSubscriberResponse
 
 	requestLock   chan bool
 	doSubscribe   func(context.Context, api.TableID) error
@@ -572,6 +608,7 @@ func (s *logTailSubscriber) init(serviceAddr string) (err error) {
 	// XXX we assume that we have only 1 dn now.
 	s.dnNodeID = 0
 
+	s.receivedResp = nil
 	// if requestLock is not nil, it's most likely called by reconnect process.
 	// we need to set it not ready first to ensure that no one can subscribe or unsubscribe table during reconnect.
 	if s.requestLock != nil {
@@ -626,7 +663,7 @@ func (s *logTailSubscriber) subscribeTable(
 	ctx context.Context, tblId api.TableID) error {
 	// set a default deadline for ctx if it doesn't have.
 	if _, ok := ctx.Deadline(); !ok {
-		newCtx, cancel := context.WithTimeout(ctx, defaultTimeOutToSubscribeTable)
+		newCtx, cancel := context.WithTimeout(ctx, defaultRequestDeadline)
 		_ = cancel
 		return s.logTailClient.Subscribe(newCtx, tblId)
 	}
@@ -638,23 +675,29 @@ func (s *logTailSubscriber) unSubscribeTable(
 	ctx context.Context, tblId api.TableID) error {
 	// set a default deadline for ctx if it doesn't have.
 	if _, ok := ctx.Deadline(); !ok {
-		newCtx, cancel := context.WithTimeout(ctx, defaultTimeOutToSubscribeTable)
+		newCtx, cancel := context.WithTimeout(ctx, defaultRequestDeadline)
 		_ = cancel
 		return s.logTailClient.Unsubscribe(newCtx, tblId)
 	}
 	return s.logTailClient.Unsubscribe(ctx, tblId)
 }
 
-func (s *logTailSubscriber) receiveResponse() logTailSubscriberResponse {
-	r, err := s.logTailClient.Receive()
-	return logTailSubscriberResponse{
+func (s *logTailSubscriber) receiveResponse(deadlineCtx context.Context) logTailSubscriberResponse {
+	if s.receivedResp != nil {
+		return *s.receivedResp
+	}
+
+	r, err := s.logTailClient.Receive(deadlineCtx)
+	resp := logTailSubscriberResponse{
 		response: r,
 		err:      err,
 	}
+	s.receivedResp = &resp
+	return resp
 }
 
 func (e *Engine) InitLogTailPushModel(
-	ctx context.Context,
+	ctx context.Context, mp *mpool.MPool,
 	timestampWaiter client.TimestampWaiter) error {
 
 	// try to init log tail client. if failed, retry.
@@ -667,7 +710,7 @@ func (e *Engine) InitLogTailPushModel(
 		break
 	}
 
-	e.pClient.receiveTableLogTailContinuously(ctx, e)
+	e.pClient.receiveTableLogTailContinuously(ctx, e, mp)
 	e.pClient.unusedTableGCTicker(ctx)
 	return nil
 }
@@ -690,11 +733,11 @@ func distributeSubscribeResponse(
 		}
 		e.pClient.subscribed.setTableSubscribe(tbl.DbId, tbl.TbId)
 	} else {
-		routineIndex := tbl.TbId % parallelNums
+		routineIndex := tbl.TbId % consumerNumber
 		recRoutines[routineIndex].sendSubscribeResponse(ctx, response)
 	}
 	// no matter how we consume the response, should update all timestamp.
-	e.pClient.receivedLogTailTime.updateTimestamp(parallelNums, *lt.Ts)
+	e.pClient.receivedLogTailTime.updateTimestamp(consumerNumber, *lt.Ts)
 	for _, rc := range recRoutines {
 		rc.updateTimeFromT(*lt.Ts)
 	}
@@ -739,11 +782,11 @@ func distributeUpdateResponse(
 		if ifShouldNotDistribute(table.DbId, table.TbId) {
 			continue
 		}
-		recIndex := table.TbId % parallelNums
+		recIndex := table.TbId % consumerNumber
 		recRoutines[recIndex].sendTableLogTail(list[index])
 	}
 	// should update all the timestamp.
-	e.pClient.receivedLogTailTime.updateTimestamp(parallelNums, *response.To)
+	e.pClient.receivedLogTailTime.updateTimestamp(consumerNumber, *response.To)
 	for _, rc := range recRoutines {
 		rc.updateTimeFromT(*response.To)
 	}
@@ -762,7 +805,7 @@ func distributeUnSubscribeResponse(
 			tbl.DbId, tbl.TbId)
 		return nil
 	}
-	routineIndex := tbl.TbId % parallelNums
+	routineIndex := tbl.TbId % consumerNumber
 	recRoutines[routineIndex].sendUnSubscribeResponse(response)
 
 	return nil
@@ -798,17 +841,17 @@ func createRoutineToConsumeLogTails(
 	ctx context.Context,
 	routineId int, signalBufferLength int,
 	e *Engine, errOut chan error) routineController {
-	controller := routineController{
-		routineId:  routineId,
-		closeChan:  make(chan bool),
-		signalChan: make(chan routineControlCmd, signalBufferLength),
-	}
 
-	go func(engine *Engine, receiver *routineController, errRet chan error) {
+	singleRoutineToConsumeLogTail := func(ctx context.Context, engine *Engine, receiver *routineController, errRet chan error) {
+		errHappen := false
 		for {
 			select {
 			case cmd := <-receiver.signalChan:
+				if errHappen {
+					continue
+				}
 				if err := cmd.action(ctx, engine, receiver); err != nil {
+					errHappen = true
 					errRet <- err
 				}
 
@@ -818,7 +861,15 @@ func createRoutineToConsumeLogTails(
 				return
 			}
 		}
-	}(e, &controller, errOut)
+	}
+
+	controller := routineController{
+		routineId:  routineId,
+		closeChan:  make(chan bool),
+		signalChan: make(chan routineControlCmd, signalBufferLength),
+	}
+
+	go singleRoutineToConsumeLogTail(ctx, e, &controller, errOut)
 
 	return controller
 }

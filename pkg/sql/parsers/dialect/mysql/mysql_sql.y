@@ -81,6 +81,7 @@ import (
     parenTableExpr *tree.ParenTableExpr
     identifierList tree.IdentifierList
     joinCond tree.JoinCond
+    selectLockInfo *tree.SelectLockInfo
 
     columnType *tree.T
     unresolvedName *tree.UnresolvedName
@@ -226,6 +227,11 @@ import (
     elseIfClauseList []*tree.ElseIfStmt
     subscriptionOption *tree.SubscriptionOption
     accountsSetOption *tree.AccountsSetOption
+
+    transactionCharacteristic *tree.TransactionCharacteristic
+    transactionCharacteristicList []*tree.TransactionCharacteristic
+    isolationLevel tree.IsolationLevelType
+    accessMode tree.AccessModeType
 }
 
 %token LEX_ERROR
@@ -433,7 +439,7 @@ import (
 %type <statement> alter_account_stmt alter_user_stmt alter_view_stmt update_stmt use_stmt update_no_with_stmt alter_database_config_stmt alter_table_stmt
 %type <statement> transaction_stmt begin_stmt commit_stmt rollback_stmt
 %type <statement> explain_stmt explainable_stmt
-%type <statement> set_stmt set_variable_stmt set_password_stmt set_role_stmt set_default_role_stmt
+%type <statement> set_stmt set_variable_stmt set_password_stmt set_role_stmt set_default_role_stmt set_transaction_stmt
 %type <statement> lock_stmt lock_table_stmt unlock_table_stmt
 %type <statement> revoke_stmt grant_stmt
 %type <statement> load_data_stmt
@@ -486,6 +492,7 @@ import (
 %type <str> insert_column
 %type <identifierList> column_list column_list_opt partition_clause_opt partition_id_list insert_column_list accounts_list
 %type <joinCond> join_condition join_condition_opt on_expression_opt
+%type <selectLockInfo> select_lock_opt
 
 %type <functionName> func_name
 %type <funcArgs> func_args_list_opt func_args_list
@@ -702,6 +709,10 @@ import (
 %type<tableLocks> table_lock_list
 %type<tableLockType> table_lock_type
 
+%type<transactionCharacteristic> transaction_characteristic
+%type<transactionCharacteristicList> transaction_characteristic_list
+%type<isolationLevel> isolation_level
+%type<accessMode> access_mode
 %%
 
 start_command:
@@ -1802,6 +1813,84 @@ set_stmt:
 |   set_password_stmt
 |   set_role_stmt
 |   set_default_role_stmt
+|   set_transaction_stmt
+
+set_transaction_stmt:
+    SET TRANSACTION transaction_characteristic_list
+    {
+	$$ = &tree.SetTransaction{
+	    Global: false,
+	    CharacterList: $3,
+	    }
+    }
+|   SET GLOBAL TRANSACTION transaction_characteristic_list
+    {
+        $$ = &tree.SetTransaction{
+            Global: true,
+            CharacterList: $4,
+            }
+    }
+|   SET SESSION TRANSACTION transaction_characteristic_list
+    {
+        $$ = &tree.SetTransaction{
+            Global: false,
+            CharacterList: $4,
+            }
+    }
+
+
+transaction_characteristic_list:
+    transaction_characteristic
+    {
+	$$ = []*tree.TransactionCharacteristic{ $1 }
+    }
+|   transaction_characteristic_list ',' transaction_characteristic
+    {
+	$$ = append($1, $3)
+    }
+
+transaction_characteristic:
+    ISOLATION LEVEL isolation_level
+    {
+	$$ = &tree.TransactionCharacteristic{
+	    IsLevel: true,
+	    Isolation: $3,
+	}
+    }
+|   access_mode
+    {
+	$$ = &tree.TransactionCharacteristic{
+	    Access: $1,
+	}
+    }
+
+isolation_level:
+    REPEATABLE READ
+    {
+	$$ = tree.ISOLATION_LEVEL_REPEATABLE_READ
+    }
+|   READ COMMITTED
+    {
+	$$ = tree.ISOLATION_LEVEL_READ_COMMITTED
+    }
+|   READ UNCOMMITTED
+    {
+	$$ = tree.ISOLATION_LEVEL_READ_UNCOMMITTED
+    }
+|   SERIALIZABLE
+    {
+	$$ = tree.ISOLATION_LEVEL_SERIALIZABLE
+    }
+
+access_mode:
+   READ WRITE
+   {
+	$$ = tree.ACCESS_MODE_READ_WRITE
+   }
+| READ ONLY
+   {
+	$$ = tree.ACCESS_MODE_READ_ONLY
+   }
 
 set_role_stmt:
     SET ROLE role_spec
@@ -3917,9 +4006,9 @@ select_stmt:
     }
 
 select_no_parens:
-    simple_select order_by_opt limit_opt export_data_param_opt // select_lock_opt
+    simple_select order_by_opt limit_opt export_data_param_opt select_lock_opt
     {
-        $$ = &tree.Select{Select: $1, OrderBy: $2, Limit: $3, Ep: $4}
+        $$ = &tree.Select{Select: $1, OrderBy: $2, Limit: $3, Ep: $4, SelectLockInfo: $5}
     }
 |   select_with_parens order_by_clause export_data_param_opt
     {
@@ -3929,9 +4018,9 @@ select_no_parens:
     {
         $$ = &tree.Select{Select: $1, OrderBy: $2, Limit: $3, Ep: $4}
     }
-|    with_clause simple_select order_by_opt limit_opt export_data_param_opt // select_lock_opt
+|   with_clause simple_select order_by_opt limit_opt export_data_param_opt select_lock_opt
     {
-        $$ = &tree.Select{Select: $2, OrderBy: $3, Limit: $4, Ep: $5, With: $1}
+        $$ = &tree.Select{Select: $2, OrderBy: $3, Limit: $4, Ep: $5, SelectLockInfo:$6, With: $1}
     }
 |   with_clause select_with_parens order_by_clause export_data_param_opt
     {
@@ -4064,6 +4153,17 @@ nulls_first_last_opt:
 |   NULLS LAST
     {
         $$ = tree.NullsLast
+    }
+
+select_lock_opt:
+    {
+        $$ = nil
+    }
+|   FOR UPDATE
+    {
+        $$ = &tree.SelectLockInfo{
+            LockType:tree.SelectLockForUpdate,
+        }
     }
 
 select_with_parens:
