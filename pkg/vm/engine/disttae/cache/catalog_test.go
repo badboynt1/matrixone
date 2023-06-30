@@ -130,19 +130,13 @@ func TestDatabasesWithMultiVersion(t *testing.T) {
 	mp := mpool.MustNewZero()
 	cc := NewCatalog()
 	bat := newTestDatabaseBatch(mp)
-	names := vector.MustFixedCol[types.Varlena](bat.GetVector(catalog.MO_DATABASE_DAT_NAME_IDX + MO_OFF))
 	accounts := vector.MustFixedCol[uint32](bat.GetVector(catalog.MO_DATABASE_ACCOUNT_ID_IDX + MO_OFF))
 	{ // reset account id
 		for i := range accounts {
 			accounts[i] = 0
 		}
 	}
-	{ // reset names
-		name := []byte{'0'}
-		for i := range names {
-			names[i], _, _ = types.BuildVarlena(name, nil, nil)
-		}
-	}
+
 	cc.InsertDatabase(bat)
 	// test get
 	dbList := cc.Databases(0, timestamp.Timestamp{

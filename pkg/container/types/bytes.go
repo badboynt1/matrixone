@@ -17,7 +17,6 @@ package types
 import (
 	"unsafe"
 
-	"github.com/matrixorigin/matrixone/pkg/common/mpool"
 	"github.com/matrixorigin/matrixone/pkg/common/util"
 )
 
@@ -57,29 +56,6 @@ func (v *Varlena) SetOffsetLen(voff, vlen uint32) {
 	s[0] = VarlenaBigHdr
 	s[1] = voff
 	s[2] = vlen
-}
-
-func BuildVarlena(bs []byte, area []byte, m *mpool.MPool) (Varlena, []byte, error) {
-	var err error
-	var v Varlena
-	vlen := len(bs)
-	if vlen <= VarlenaInlineSize {
-		v[0] = byte(vlen)
-		copy(v[1:1+vlen], bs)
-		return v, area, nil
-	} else {
-		voff := len(area)
-		if voff+vlen < cap(area) || m == nil {
-			area = append(area, bs...)
-		} else {
-			area, err = m.Grow2(area, bs, voff+vlen)
-			if err != nil {
-				return v, nil, err
-			}
-		}
-		v.SetOffsetLen(uint32(voff), uint32(vlen))
-		return v, area, nil
-	}
 }
 
 func (v *Varlena) IsSmall() bool {
