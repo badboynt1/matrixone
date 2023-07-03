@@ -114,6 +114,21 @@ func (mr *MockTxnClientMockRecorder) NewWithSnapshot(snapshot interface{}) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewWithSnapshot", reflect.TypeOf((*MockTxnClient)(nil).NewWithSnapshot), snapshot)
 }
 
+// WaitLogTailAppliedAt mocks base method.
+func (m *MockTxnClient) WaitLogTailAppliedAt(ctx context.Context, ts timestamp.Timestamp) (timestamp.Timestamp, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WaitLogTailAppliedAt", ctx, ts)
+	ret0, _ := ret[0].(timestamp.Timestamp)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// WaitLogTailAppliedAt indicates an expected call of WaitLogTailAppliedAt.
+func (mr *MockTxnClientMockRecorder) WaitLogTailAppliedAt(ctx, ts interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WaitLogTailAppliedAt", reflect.TypeOf((*MockTxnClient)(nil).WaitLogTailAppliedAt), ctx, ts)
+}
+
 // MockTxnClientWithCtl is a mock of TxnClientWithCtl interface.
 type MockTxnClientWithCtl struct {
 	ctrl     *gomock.Controller
@@ -236,6 +251,21 @@ func (m *MockTxnClientWithCtl) SetLatestCommitTS(arg0 timestamp.Timestamp) {
 func (mr *MockTxnClientWithCtlMockRecorder) SetLatestCommitTS(arg0 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetLatestCommitTS", reflect.TypeOf((*MockTxnClientWithCtl)(nil).SetLatestCommitTS), arg0)
+}
+
+// WaitLogTailAppliedAt mocks base method.
+func (m *MockTxnClientWithCtl) WaitLogTailAppliedAt(ctx context.Context, ts timestamp.Timestamp) (timestamp.Timestamp, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WaitLogTailAppliedAt", ctx, ts)
+	ret0, _ := ret[0].(timestamp.Timestamp)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// WaitLogTailAppliedAt indicates an expected call of WaitLogTailAppliedAt.
+func (mr *MockTxnClientWithCtlMockRecorder) WaitLogTailAppliedAt(ctx, ts interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WaitLogTailAppliedAt", reflect.TypeOf((*MockTxnClientWithCtl)(nil).WaitLogTailAppliedAt), ctx, ts)
 }
 
 // MockTxnClientWithFeature is a mock of TxnClientWithFeature interface.
@@ -386,6 +416,21 @@ func (m *MockTxnClientWithFeature) Resume() {
 func (mr *MockTxnClientWithFeatureMockRecorder) Resume() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resume", reflect.TypeOf((*MockTxnClientWithFeature)(nil).Resume))
+}
+
+// WaitLogTailAppliedAt mocks base method.
+func (m *MockTxnClientWithFeature) WaitLogTailAppliedAt(ctx context.Context, ts timestamp.Timestamp) (timestamp.Timestamp, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WaitLogTailAppliedAt", ctx, ts)
+	ret0, _ := ret[0].(timestamp.Timestamp)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// WaitLogTailAppliedAt indicates an expected call of WaitLogTailAppliedAt.
+func (mr *MockTxnClientWithFeatureMockRecorder) WaitLogTailAppliedAt(ctx, ts interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WaitLogTailAppliedAt", reflect.TypeOf((*MockTxnClientWithFeature)(nil).WaitLogTailAppliedAt), ctx, ts)
 }
 
 // MockTxnOperator is a mock of TxnOperator interface.
@@ -1163,6 +1208,20 @@ func (m *MockWorkspace) EXPECT() *MockWorkspaceMockRecorder {
 	return m.recorder
 }
 
+// Commit mocks base method.
+func (m *MockWorkspace) Commit(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Commit", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Commit indicates an expected call of Commit.
+func (mr *MockWorkspaceMockRecorder) Commit(ctx interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Commit", reflect.TypeOf((*MockWorkspace)(nil).Commit), ctx)
+}
+
 // IncrStatementID mocks base method.
 func (m *MockWorkspace) IncrStatementID(ctx context.Context, commit bool) error {
 	m.ctrl.T.Helper()
@@ -1177,6 +1236,20 @@ func (mr *MockWorkspaceMockRecorder) IncrStatementID(ctx, commit interface{}) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrStatementID", reflect.TypeOf((*MockWorkspace)(nil).IncrStatementID), ctx, commit)
 }
 
+// Rollback mocks base method.
+func (m *MockWorkspace) Rollback(ctx context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Rollback", ctx)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Rollback indicates an expected call of Rollback.
+func (mr *MockWorkspaceMockRecorder) Rollback(ctx interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rollback", reflect.TypeOf((*MockWorkspace)(nil).Rollback), ctx)
+}
+
 // RollbackLastStatement mocks base method.
 func (m *MockWorkspace) RollbackLastStatement(ctx context.Context) error {
 	m.ctrl.T.Helper()
@@ -1189,33 +1262,4 @@ func (m *MockWorkspace) RollbackLastStatement(ctx context.Context) error {
 func (mr *MockWorkspaceMockRecorder) RollbackLastStatement(ctx interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RollbackLastStatement", reflect.TypeOf((*MockWorkspace)(nil).RollbackLastStatement), ctx)
-}
-
-
-// Commit mocks base method.
-func (m *MockWorkspace) Commit(ctx context.Context) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RollbackLastStatement", ctx)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Commit indicates an expected call of Commit.
-func (mr *MockWorkspaceMockRecorder) Commit(ctx interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Commit", reflect.TypeOf((*MockWorkspace)(nil).Commit), ctx)
-}
-
-// Rollback mocks base method.
-func (m *MockWorkspace) Rollback(ctx context.Context) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RollbackLastStatement", ctx)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Rollback indicates an expected call of Rollback.
-func (mr *MockWorkspaceMockRecorder) Rollback(ctx interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rollback", reflect.TypeOf((*MockWorkspace)(nil).Rollback), ctx)
 }

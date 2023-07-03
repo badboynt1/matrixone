@@ -20,6 +20,7 @@ import (
 )
 
 func (p *PartitionState) PrimaryKeysMayBeModified(
+	tableID uint64,
 	from types.TS,
 	to types.TS,
 	keysVector *vector.Vector,
@@ -29,7 +30,7 @@ func (p *PartitionState) PrimaryKeysMayBeModified(
 
 	keys := EncodePrimaryKeyVector(keysVector, packer)
 	for _, key := range keys {
-		if p.PrimaryKeyMayBeModified(from, to, key) {
+		if p.PrimaryKeyMayBeModified(tableID, from, to, key) {
 			return true
 		}
 	}
@@ -38,6 +39,7 @@ func (p *PartitionState) PrimaryKeysMayBeModified(
 }
 
 func (p *PartitionState) PrimaryKeyMayBeModified(
+	tableID uint64,
 	from types.TS,
 	to types.TS,
 	key []byte,
@@ -46,6 +48,13 @@ func (p *PartitionState) PrimaryKeyMayBeModified(
 	defer iter.Close()
 
 	empty := true
+	if ts, ok := p.lastFlushTimestamp.Load(tableID); ok {
+		if from.Greater(ts.(types.TS)) {
+			empty = false
+		}
+	} else {
+		empty = false
+	}
 	for iter.Next() {
 		empty = false
 		row := iter.Entry()
@@ -53,6 +62,5 @@ func (p *PartitionState) PrimaryKeyMayBeModified(
 			return true
 		}
 	}
-
 	return empty
 }
