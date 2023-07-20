@@ -32,15 +32,16 @@ func init() {
 }
 
 type EncodeBatch struct {
-	Zs       []int64
-	Vecs     []*vector.Vector
-	Attrs    []string
-	AggInfos []aggInfo
+	Zs         []int64
+	Vecs       []*vector.Vector
+	Attrs      []string
+	AggInfos   []aggInfo
+	ShuffleIDX int16
 }
 
 func (m *EncodeBatch) MarshalBinary() ([]byte, error) {
 	// --------------------------------------------------------------------
-	// | len | Zs... | len | Vecs... | len | Attrs... | len | AggInfos... |
+	// | len | Zs... | len | Vecs... | len | Attrs... | len | AggInfos... | ShuffleIDX
 	// --------------------------------------------------------------------
 	var buf bytes.Buffer
 
@@ -91,6 +92,9 @@ func (m *EncodeBatch) MarshalBinary() ([]byte, error) {
 		buf.Write(types.EncodeInt32(&size))
 		buf.Write(data)
 	}
+
+	// ShuffleIDX
+	buf.Write(types.EncodeInt16(&m.ShuffleIDX))
 
 	return buf.Bytes(), nil
 }
@@ -156,6 +160,10 @@ func (m *EncodeBatch) UnmarshalBinary(data []byte) error {
 	}
 	m.AggInfos = aggs
 
+	// ShuffleIDX
+	m.ShuffleIDX = types.DecodeInt16(buf[:2])
+	buf = buf[2:]
+
 	return nil
 }
 
@@ -175,7 +183,7 @@ type aggInfo struct {
 type Batch struct {
 	// Ro if true, Attrs is read only
 	Ro         bool
-	ShuffleIDX int //used only in shuffle dispatch
+	ShuffleIDX int16 //used only in shuffle dispatch
 	// reference count, default is 1
 	Cnt int64
 	// Attrs column name list

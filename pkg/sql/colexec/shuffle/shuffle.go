@@ -138,7 +138,7 @@ func initShuffledBats(ap *Argument, bat *batch.Batch, proc *process.Process, reg
 	shuffledBats := ap.ctr.shuffledBats
 
 	shuffledBats[regIndex] = batch.NewWithSize(lenVecs)
-	shuffledBats[regIndex].ShuffleIDX = regIndex
+	shuffledBats[regIndex].ShuffleIDX = int16(regIndex)
 	shuffledBats[regIndex].Zs = proc.Mp().GetSels()
 	for j := range shuffledBats[regIndex].Vecs {
 		shuffledBats[regIndex].Vecs[j] = proc.GetVector(*bat.Vecs[j].GetType())
@@ -343,7 +343,7 @@ func rangeShuffle(bat *batch.Batch, ap *Argument, proc *process.Process) (proces
 	if groupByVec.GetSorted() {
 		ok, regIndex := allBatchInOneRange(ap, bat)
 		if ok {
-			bat.ShuffleIDX = int(regIndex)
+			bat.ShuffleIDX = int16(regIndex)
 			proc.SetInputBatch(bat)
 			return process.ExecNext, nil
 		}

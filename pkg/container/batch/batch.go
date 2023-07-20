@@ -116,10 +116,11 @@ func (bat *Batch) MarshalBinary() ([]byte, error) {
 		aggInfo[i].Agg = bat.Aggs[i]
 	}
 	return types.Encode(&EncodeBatch{
-		Zs:       bat.Zs,
-		Vecs:     bat.Vecs,
-		Attrs:    bat.Attrs,
-		AggInfos: aggInfo,
+		Zs:         bat.Zs,
+		Vecs:       bat.Vecs,
+		Attrs:      bat.Attrs,
+		AggInfos:   aggInfo,
+		ShuffleIDX: bat.ShuffleIDX,
 	})
 }
 
@@ -140,6 +141,7 @@ func (bat *Batch) UnmarshalBinary(data []byte) error {
 			bat.Aggs[i] = info.Agg
 		}
 	}
+	bat.ShuffleIDX = rbat.ShuffleIDX
 	return nil
 }
 
