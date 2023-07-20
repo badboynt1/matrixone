@@ -162,7 +162,6 @@ func (m *EncodeBatch) UnmarshalBinary(data []byte) error {
 
 	// ShuffleIDX
 	m.ShuffleIDX = types.DecodeInt16(buf[:2])
-	buf = buf[2:]
 
 	return nil
 }
