@@ -90,6 +90,7 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 			return process.ExecNext, nil
 
 		default:
+			logutil.Infof("join send nil batch")
 			logutil.Infof("probe receive %v batches, count %v", ap.ctr.receiveProbeBatches, ap.ctr.receiveProbeCnt)
 			proc.SetInputBatch(nil)
 			return process.ExecStop, nil

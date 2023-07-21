@@ -52,6 +52,9 @@ type container struct {
 	vecs  []*vector.Vector
 
 	mp *hashmap.StrHashMap
+
+	batches int
+	count   int
 }
 
 type Argument struct {

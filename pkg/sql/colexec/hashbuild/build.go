@@ -16,6 +16,7 @@ package hashbuild
 
 import (
 	"bytes"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 
 	"github.com/matrixorigin/matrixone/pkg/common/hashmap"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
@@ -116,8 +117,13 @@ func (ctr *container) build(ap *Argument, proc *process.Process, anal process.An
 		}
 
 		if bat == nil {
+			logutil.Infof("build receive %v batches, count %v", ap.ctr.batches, ap.ctr.count)
 			break
 		}
+
+		ap.ctr.batches++
+		ap.ctr.count += bat.Length()
+
 		if bat.Length() == 0 {
 			bat.Clean(proc.Mp())
 			continue
