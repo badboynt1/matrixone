@@ -57,6 +57,9 @@ type container struct {
 	vecs  []*vector.Vector
 
 	mp *hashmap.JoinMap
+
+	receiveProbeBatches int
+	receiveProbeCnt     int
 }
 
 type Argument struct {

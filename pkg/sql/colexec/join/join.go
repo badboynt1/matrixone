@@ -19,6 +19,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/common/hashmap"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	"github.com/matrixorigin/matrixone/pkg/container/vector"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
 )
@@ -89,6 +90,7 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 			return process.ExecNext, nil
 
 		default:
+			logutil.Infof("probe receive %v batches, count %v", ap.ctr.receiveProbeBatches, ap.ctr.receiveProbeCnt)
 			proc.SetInputBatch(nil)
 			return process.ExecStop, nil
 		}
@@ -112,6 +114,8 @@ func (ctr *container) build(proc *process.Process, anal process.Analyze) error {
 func (ctr *container) probe(bat *batch.Batch, ap *Argument, proc *process.Process, anal process.Analyze, isFirst bool, isLast bool) error {
 	defer proc.PutBatch(bat)
 	anal.Input(bat, isFirst)
+	ap.ctr.receiveProbeBatches++
+	ap.ctr.receiveProbeCnt += bat.Length()
 	rbat := batch.NewWithSize(len(ap.Result))
 	rbat.Zs = proc.Mp().GetSels()
 	for i, rp := range ap.Result {
