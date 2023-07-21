@@ -73,6 +73,9 @@ type container struct {
 	remoteRegsCnt int
 
 	remoteToIdx map[uuid.UUID]int
+
+	sendBatches int
+	sendCount   int
 }
 
 type Argument struct {

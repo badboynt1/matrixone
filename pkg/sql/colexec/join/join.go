@@ -16,8 +16,6 @@ package join
 
 import (
 	"bytes"
-	"github.com/matrixorigin/matrixone/pkg/logutil"
-
 	"github.com/matrixorigin/matrixone/pkg/common/hashmap"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	"github.com/matrixorigin/matrixone/pkg/container/vector"
@@ -91,7 +89,6 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 			return process.ExecNext, nil
 
 		default:
-			logutil.Infof("join send nil batch")
 			proc.SetInputBatch(nil)
 			return process.ExecStop, nil
 		}
@@ -213,7 +210,6 @@ func (ctr *container) probe(bat *batch.Batch, ap *Argument, proc *process.Proces
 	}
 	anal.Output(rbat, isLast)
 	proc.SetInputBatch(rbat)
-	logutil.Infof("join send 1 batch")
 	return nil
 }
 

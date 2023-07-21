@@ -87,7 +87,8 @@ func sendToAllRemoteFunc(bat *batch.Batch, ap *Argument, proc *process.Process) 
 }
 
 func sendBatToIndex(ap *Argument, proc *process.Process, bat *batch.Batch, regIndex uint32) error {
-	logutil.Infof("shuffle batch to index %v", regIndex)
+	ap.ctr.sendBatches++
+	ap.ctr.sendCnt += bat.Length()
 	for i, reg := range ap.LocalRegs {
 		batIndex := uint32(ap.ShuffleRegIdxLocal[i])
 		if regIndex == batIndex {

@@ -94,6 +94,9 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 	ap := arg.(*Argument)
 	bat := proc.InputBatch()
 	if bat == nil {
+		if ap.FuncId == ShuffleToAllFunc {
+			logutil.Infof("shuffle send %v batches, count %v", ap.ctr.sendBatches, ap.ctr.sendCnt)
+		}
 		return process.ExecStop, nil
 	}
 	if bat.Length() == 0 {
