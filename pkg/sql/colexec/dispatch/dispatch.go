@@ -56,6 +56,7 @@ func Prepare(proc *process.Process, arg any) error {
 		} else {
 			ap.prepareLocal()
 		}
+		ap.reportRegs()
 
 	case SendToAnyFunc:
 		if ctr.remoteRegsCnt == 0 {
@@ -151,4 +152,15 @@ func (arg *Argument) prepareLocal() {
 	arg.ctr.prepared = true
 	arg.ctr.isRemote = false
 	arg.ctr.remoteReceivers = nil
+}
+
+func (arg *Argument) reportRegs() {
+	for i, reg := range arg.LocalRegs {
+		batIndex := uint32(arg.ShuffleRegIdxLocal[i])
+		logutil.Infof("local reg %v -> %v", batIndex, reg.Ch)
+	}
+	for _, r := range arg.ctr.remoteReceivers {
+		batIndex := uint32(arg.ctr.remoteToIdx[r.uuid])
+		logutil.Infof("remote reg %v -> %v", batIndex, r.uuid)
+	}
 }
