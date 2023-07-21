@@ -2450,7 +2450,7 @@ func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) []
 	idx := 0
 	cnt := 0
 	for _, n := range c.cnList {
-		dop := 16
+		dop := 128
 		ss := make([]*Scope, dop)
 		for i := range ss {
 			ss[i] = new(Scope)
