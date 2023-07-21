@@ -16,6 +16,7 @@ package mergegroup
 
 import (
 	"bytes"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 
 	"github.com/matrixorigin/matrixone/pkg/common/hashmap"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
@@ -104,6 +105,8 @@ func (ctr *container) build(proc *process.Process, anal process.Analyze, isFirst
 
 func (ctr *container) process(bat *batch.Batch, proc *process.Process) error {
 	var err error
+
+	logutil.Infof("merge group get 1 batch")
 
 	if ctr.bat == nil {
 		keyWidth := 0
