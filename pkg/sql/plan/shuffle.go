@@ -23,7 +23,7 @@ import (
 
 const (
 	HashMapSizeForBucket = 500000
-	MAXShuffleDOP        = 16
+	MAXShuffleDOP        = 64
 	ShuffleThreshHold    = 50000
 )
 
