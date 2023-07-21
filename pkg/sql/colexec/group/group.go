@@ -17,6 +17,7 @@ package group
 import (
 	"bytes"
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 
 	"github.com/matrixorigin/matrixone/pkg/common/hashmap"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
@@ -160,6 +161,7 @@ func (ctr *container) getBatchAggs(ap *Argument) error {
 
 func (ctr *container) process(ap *Argument, proc *process.Process, anal process.Analyze, isFirst bool, isLast bool) (bool, error) {
 	bat := proc.InputBatch()
+	logutil.Infof("group get 1 batch")
 	if bat == nil {
 		// the result of Agg can't be empty but 0 or NULL.
 		if !ctr.alreadyGetAgg {
