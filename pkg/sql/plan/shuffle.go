@@ -166,6 +166,23 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 		return
 	}
 
+	child0 := builder.qry.Nodes[n.Children[0]]
+	if child0.NodeType == plan.Node_JOIN && child0.Stats.Shuffle {
+		if child0.Stats.HashmapSize > n.Stats.HashmapSize {
+			return
+		} else if child0.Stats.HashmapSize == n.Stats.HashmapSize && child0.Stats.Cost > n.Stats.Cost {
+			return
+		}
+	}
+	child1 := builder.qry.Nodes[n.Children[1]]
+	if child1.NodeType == plan.Node_JOIN && child1.Stats.Shuffle {
+		if child1.Stats.HashmapSize > n.Stats.HashmapSize {
+			return
+		} else if child1.Stats.HashmapSize == n.Stats.HashmapSize && child1.Stats.Cost > n.Stats.Cost {
+			return
+		}
+	}
+
 	if n.Stats.HashmapSize < HashMapSizeForShuffle {
 		return
 	}
@@ -215,6 +232,16 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 	if n.Stats.ShuffleType == plan.ShuffleType_Hash {
 		n.Stats.Shuffle = false
 	}
+
+	//todo fix this in the future
+	if n.Stats.Shuffle {
+		if child0.NodeType == plan.Node_JOIN && child0.Stats.Shuffle {
+			child0.Stats.Shuffle = false
+		}
+		if child1.NodeType == plan.Node_JOIN && child1.Stats.Shuffle {
+			child1.Stats.Shuffle = false
+		}
+	}
 }
 
 // to determine if groupby need to go shuffle
@@ -257,6 +284,29 @@ func determinShuffleForGroupBy(n *plan.Node, builder *QueryBuilder) {
 	case types.T_varchar, types.T_char, types.T_text:
 		n.Stats.ShuffleColIdx = int32(idx)
 		n.Stats.Shuffle = true
+	}
+
+	child := builder.qry.Nodes[n.Children[0]]
+	if child.NodeType == plan.Node_JOIN {
+		if n.Stats.Shuffle && child.Stats.Shuffle {
+			// shuffle group can follow shuffle join
+			if n.Stats.ShuffleType == child.Stats.ShuffleType {
+				groupHashCol, _ := GetHashColumn(n.GroupBy[n.Stats.ShuffleColIdx])
+				switch exprImpl := child.OnList[child.Stats.ShuffleColIdx].Expr.(type) {
+				case *plan.Expr_F:
+					for _, arg := range exprImpl.F.Args {
+						joinHashCol, _ := GetHashColumn(arg)
+						if groupHashCol.RelPos == joinHashCol.RelPos && groupHashCol.ColPos == joinHashCol.ColPos {
+							n.Stats.ShuffleMethod = plan.ShuffleMethod_Follow
+							return
+						}
+					}
+				}
+			}
+			// shuffle group can not follow shuffle join, need to reshuffle
+			n.Stats.ShuffleMethod = plan.ShuffleMethod_Reshuffle
+			return
+		}
 	}
 }
 
@@ -324,48 +374,4 @@ func determineShuffleMethod(nodeID int32, builder *QueryBuilder) {
 	default:
 		node.Stats.ShuffleColIdx = -1
 	}
-
-	//join->group ,if they use the same hask key, the group can use follow shuffle method
-	if node.NodeType == plan.Node_AGG {
-		child := builder.qry.Nodes[node.Children[0]]
-		if child.NodeType == plan.Node_JOIN {
-			if node.Stats.Shuffle && child.Stats.Shuffle {
-				// shuffle group can follow shuffle join
-				if node.Stats.ShuffleType == child.Stats.ShuffleType {
-					groupHashCol, _ := GetHashColumn(node.GroupBy[node.Stats.ShuffleColIdx])
-					switch exprImpl := child.OnList[node.Stats.ShuffleColIdx].Expr.(type) {
-					case *plan.Expr_F:
-						for _, arg := range exprImpl.F.Args {
-							joinHashCol, _ := GetHashColumn(arg)
-							if groupHashCol.RelPos == joinHashCol.RelPos && groupHashCol.ColPos == joinHashCol.ColPos {
-								node.Stats.ShuffleMethod = plan.ShuffleMethod_Follow
-								return
-							}
-						}
-					}
-				}
-
-				// shuffle group can not follow shuffle join, need to reshuffle
-				node.Stats.ShuffleMethod = plan.ShuffleMethod_Reshuffle
-				return
-			}
-		}
-	}
-
-	// for now, only one node can go shuffle, choose the biggest one
-	// will fix this in the future
-	if node.Stats.Shuffle && node.NodeType != plan.Node_TABLE_SCAN {
-		shuffleID := findShuffleNode(nodeID, nodeID, builder)
-		if shuffleID != -1 {
-			shuffleNode := builder.qry.Nodes[shuffleID]
-			if node.Stats.HashmapSize > shuffleNode.Stats.HashmapSize {
-				shuffleNode.Stats.Shuffle = false
-			} else if node.Stats.HashmapSize == shuffleNode.Stats.HashmapSize && node.Stats.Cost > shuffleNode.Stats.Cost {
-				shuffleNode.Stats.Shuffle = false
-			} else {
-				node.Stats.Shuffle = false
-			}
-		}
-	}
-
 }
