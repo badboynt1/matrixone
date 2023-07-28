@@ -361,6 +361,8 @@ func (r *blockReader) Read(
 	if logutil.GetSkip1Logger().Core().Enabled(zap.DebugLevel) {
 		logutil.Debug(testutil.OperatorCatchBatch("block reader", bat))
 	}
+
+	logutil.Infof("read 1 batch from table %v ", r.tableDef.Name)
 	return bat, nil
 }
 
