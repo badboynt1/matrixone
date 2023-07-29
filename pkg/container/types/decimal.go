@@ -772,7 +772,7 @@ func (x Decimal64) Add(y Decimal64, scale1, scale2 int32) (z Decimal64, scale in
 	if scale1 > scale2 {
 		scale = scale1
 		y, err = y.Scale(scale - scale2)
-	} else {
+	} else if scale2 > scale1 {
 		scale = scale2
 		x, err = x.Scale(scale - scale1)
 	}
@@ -789,7 +789,7 @@ func (x Decimal128) Add(y Decimal128, scale1, scale2 int32) (z Decimal128, scale
 	if scale1 > scale2 {
 		scale = scale1
 		y, err = y.Scale(scale - scale2)
-	} else {
+	} else if scale2 > scale1 {
 		scale = scale2
 		x, err = x.Scale(scale - scale1)
 	}
@@ -806,7 +806,7 @@ func (x Decimal256) Add(y Decimal256, scale1, scale2 int32) (z Decimal256, scale
 	if scale1 > scale2 {
 		scale = scale1
 		y, err = y.Scale(scale - scale2)
-	} else {
+	} else if scale2 > scale1 {
 		scale = scale2
 		x, err = x.Scale(scale - scale1)
 	}
@@ -823,7 +823,7 @@ func (x Decimal64) Sub(y Decimal64, scale1, scale2 int32) (z Decimal64, scale in
 	if scale1 > scale2 {
 		scale = scale1
 		y, err = y.Scale(scale - scale2)
-	} else {
+	} else if scale2 > scale1 {
 		scale = scale2
 		x, err = x.Scale(scale - scale1)
 	}
@@ -840,7 +840,7 @@ func (x Decimal128) Sub(y Decimal128, scale1, scale2 int32) (z Decimal128, scale
 	if scale1 > scale2 {
 		scale = scale1
 		y, err = y.Scale(scale - scale2)
-	} else {
+	} else if scale2 > scale1 {
 		scale = scale2
 		x, err = x.Scale(scale - scale1)
 	}
@@ -857,7 +857,7 @@ func (x Decimal256) Sub(y Decimal256, scale1, scale2 int32) (z Decimal256, scale
 	if scale1 > scale2 {
 		scale = scale1
 		y, err = y.Scale(scale - scale2)
-	} else {
+	} else if scale2 > scale1 {
 		scale = scale2
 		x, err = x.Scale(scale - scale1)
 	}
@@ -896,7 +896,10 @@ func (x Decimal64) Mul(y Decimal64, scale1, scale2 int32) (z Decimal64, scale in
 		x2 := Decimal128{uint64(x1), 0}
 		y2 := Decimal128{uint64(y1), 0}
 		x2, _ = x2.Mul128(y2)
-		x2, _ = x2.Scale(scale - scale1 - scale2)
+		tmp := scale - scale1 - scale2
+		if tmp != 0 {
+			x2, _ = x2.Scale(tmp)
+		}
 		if x2.B64_127 != 0 || x2.B0_63>>63 != 0 {
 			err = moerr.NewInvalidInputNoCtx("Decimal64 Mul overflow: %s(Scale:%d)*%s(Scale:%d)", x.Format(0), scale1, y.Format(0), scale2)
 			return
@@ -941,7 +944,10 @@ func (x Decimal128) Mul(y Decimal128, scale1, scale2 int32) (z Decimal128, scale
 		x2 := Decimal256{x1.B0_63, x1.B64_127, 0, 0}
 		y2 := Decimal256{y1.B0_63, y1.B64_127, 0, 0}
 		x2, _ = x2.Mul256(y2)
-		x2, _ = x2.Scale(scale - scale1 - scale2)
+		tmp := scale - scale1 - scale2
+		if tmp != 0 {
+			x2, _ = x2.Scale(tmp)
+		}
 		if x2.B128_191 != 0 || x2.B192_255 != 0 || x2.B64_127>>63 != 0 {
 			err = moerr.NewInvalidInputNoCtx("Decimal128 Mul overflow: %s(Scale:%d)*%s(Scale:%d)", x.Format(0), scale1, y.Format(0), scale2)
 			return
@@ -988,7 +994,10 @@ func (x Decimal256) Mul(y Decimal256, scale1, scale2 int32) (z Decimal256, scale
 		err = moerr.NewInvalidInputNoCtx("Decimal256 Mul overflow: %s(Scale:%d)*%s(Scale:%d)", x.Format(0), scale1, y.Format(0), scale2)
 		return
 	}
-	z, _ = z.Scale(scale - scale1 - scale2)
+	tmp := scale - scale1 - scale2
+	if tmp != 0 {
+		z, _ = z.Scale(tmp)
+	}
 	if signx != signy {
 		z = z.Minus()
 	}
