@@ -52,11 +52,11 @@ func (x Decimal64) Sign() bool {
 	return x>>63 == 1
 }
 
-func (x Decimal128) Sign() bool {
+func (x *Decimal128) Sign() bool {
 	return x.B64_127>>63 == 1
 }
 
-func (x Decimal256) Sign() bool {
+func (x *Decimal256) Sign() bool {
 	return x.B192_255>>63 == 1
 }
 
