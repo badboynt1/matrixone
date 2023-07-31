@@ -1706,12 +1706,7 @@ func (c *Compile) compileUnionAll(ss []*Scope, children []*Scope) []*Scope {
 
 func (c *Compile) compileJoin(ctx context.Context, node, left, right *plan.Node, ss []*Scope, children []*Scope) []*Scope {
 	if node.Stats.Shuffle {
-		if len(c.cnList) == 1 {
-			return c.compileShuffleJoin(ctx, node, left, right, ss, children)
-		} else {
-			// only support shuffle join on standalone for now. will fix this in the future
-			node.Stats.Shuffle = false
-		}
+		return c.compileShuffleJoin(ctx, node, left, right, ss, children)
 	}
 	return c.compileBroadcastJoin(ctx, node, left, right, ss, children)
 }
@@ -2199,10 +2194,6 @@ func (c *Compile) constructShuffleAndDispatch(ss, children []*Scope, n *plan.Nod
 func (c *Compile) compileShuffleGroup(n *plan.Node, ss []*Scope, ns []*plan.Node) []*Scope {
 	currentIsFirst := c.anal.isFirst
 	c.anal.isFirst = false
-
-	if len(c.cnList) > 1 {
-		n.Stats.ShuffleMethod = plan.ShuffleMethod_Noraml
-	}
 
 	switch n.Stats.ShuffleMethod {
 	case plan.ShuffleMethod_Follow:
