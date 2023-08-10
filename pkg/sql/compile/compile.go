@@ -1820,7 +1820,7 @@ func (c *Compile) compileShuffleJoin(ctx context.Context, node, left, right *pla
 			})
 		}
 	default:
-		panic(moerr.NewNYI(ctx, fmt.Sprintf("shuffle join do not support join type '%v'", node.JoinType)))
+		panic(moerr.NewNYI(ctx, fmt.Sprintf("shuffle join do not support join typ '%v'", node.JoinType)))
 	}
 
 	if parent != nil {
@@ -2881,6 +2881,7 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
 	}
 
 	ranges, err = rel.Ranges(ctx, n.BlockFilterList)
+	logutil.Infof("after ranges, need to read %v blocks for table %v", len(ranges), n.TableDef.Name)
 	if err != nil {
 		return nil, err
 	}

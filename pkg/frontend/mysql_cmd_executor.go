@@ -3392,6 +3392,7 @@ func (mce *MysqlCmdExecutor) executeStmt(requestCtx context.Context,
 
 // execute query
 func (mce *MysqlCmdExecutor) doComQuery(requestCtx context.Context, input *UserInput) (retErr error) {
+	logutil.Infof("in doComQuery, new sql: %v", input.sql)
 	beginInstant := time.Now()
 	ses := mce.GetSession()
 	input.genSqlSourceType(ses)
