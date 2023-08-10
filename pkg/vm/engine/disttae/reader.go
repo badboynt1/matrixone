@@ -331,6 +331,8 @@ func (r *blockReader) Read(
 		r.steps = r.steps[1:]
 	}
 
+	logutil.Infof("before read a block for table %v", r.tableDef.Name)
+
 	// read the block
 	bat, err := blockio.BlockRead(
 		r.ctx, blockInfo, r.buffer, r.columns.seqnums, r.columns.colTypes, r.ts,
@@ -340,8 +342,12 @@ func (r *blockReader) Read(
 		r.fs, mp, vp,
 	)
 	if err != nil {
+		logutil.Errorf("error reading a block for table %v", r.tableDef.Name)
 		return nil, err
 	}
+
+	logutil.Infof("after read a block for table %v", r.tableDef.Name)
+
 	bat.SetAttributes(cols)
 
 	if blockInfo.Sorted && r.columns.indexOfFirstSortedColumn != -1 {
