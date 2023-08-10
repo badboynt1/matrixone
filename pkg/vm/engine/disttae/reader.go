@@ -331,7 +331,9 @@ func (r *blockReader) Read(
 		r.steps = r.steps[1:]
 	}
 
-	logutil.Infof("before read a block for table %v", r.tableDef.Name)
+	if r.tableDef.Name == "lineitem" {
+		logutil.Infof("before read a block for table %v", r.tableDef.Name)
+	}
 
 	// read the block
 	bat, err := blockio.BlockRead(
@@ -346,7 +348,9 @@ func (r *blockReader) Read(
 		return nil, err
 	}
 
-	logutil.Infof("after read a block for table %v", r.tableDef.Name)
+	if r.tableDef.Name == "lineitem" {
+		logutil.Infof("after read a block for table %v", r.tableDef.Name)
+	}
 
 	bat.SetAttributes(cols)
 
