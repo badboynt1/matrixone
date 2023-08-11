@@ -665,7 +665,7 @@ func (c *Compile) compileQuery(ctx context.Context, qry *plan.Query) ([]*Scope, 
 	}
 
 	debugstr := DebugShowScopes(steps)
-	logutil.Infof("!!!!!!!!!!%v", debugstr)
+	fmt.Printf(debugstr)
 
 	return steps, err
 }
