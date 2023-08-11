@@ -16,6 +16,7 @@ package hashbuild
 
 import (
 	"bytes"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 
 	"github.com/matrixorigin/matrixone/pkg/common/hashmap"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
@@ -179,6 +180,9 @@ func (ctr *container) build(ap *Argument, proc *process.Process, anal process.An
 			rate := float64(groupCount) / float64(i)
 			hashmapCount := int(float64(count) * rate)
 			err = ctr.mp.PreAlloc(uint64(hashmapCount), proc.Mp())
+
+			logutil.Infof("~~~~~~~  trying to prealloc hashmap, ctr.bat rowlength %v, hashmap current group count %v, rate %v, resizeto %v", count, ctr.mp.GroupCount(), rate, hashmapCount)
+
 			if err != nil {
 				return err
 			}
@@ -203,6 +207,9 @@ func (ctr *container) build(ap *Argument, proc *process.Process, anal process.An
 			ctr.sels[ai] = append(ctr.sels[ai], int32(i+k))
 		}
 	}
+
+	logutil.Infof("!!!!!!!!  build hashmap finished,  ctr.bat rowlength %v, hashmap group count %v", count, ctr.mp.GroupCount())
+
 	return nil
 }
 
