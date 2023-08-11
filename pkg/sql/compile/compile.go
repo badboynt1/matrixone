@@ -2881,9 +2881,11 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
 		}
 	}
 
+	logutil.Infof("before ranges  for table %v", n.TableDef.Name)
 	ranges, err = rel.Ranges(ctx, n.BlockFilterList)
 	logutil.Infof("after ranges, need to read %v blocks for table %v", len(ranges), n.TableDef.Name)
 	if err != nil {
+		logutil.Errorf(" error occured in ranges, %v", err)
 		return nil, err
 	}
 

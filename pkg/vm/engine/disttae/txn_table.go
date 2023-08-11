@@ -548,19 +548,23 @@ func (tbl *txnTable) Ranges(ctx context.Context, exprs []*plan.Expr) (ranges [][
 	tbl.writes = tbl.writes[:0]
 	tbl.writesOffset = tbl.db.txn.statements[tbl.db.txn.statementID-1]
 
+	logutil.Infof("ranges step1!!!!")
 	tbl.writes = tbl.db.txn.getTableWrites(tbl.db.databaseId, tbl.tableId, tbl.writes)
 
+	logutil.Infof("ranges step2!!!!")
 	// make sure we have the block infos snapshot
 	if err = tbl.updateBlockInfos(ctx); err != nil {
 		return
 	}
 
+	logutil.Infof("ranges step3!!!!")
 	// get the table's snapshot
 	var part *logtailreplay.PartitionState
 	if part, err = tbl.getPartitionState(ctx); err != nil {
 		return
 	}
 
+	logutil.Infof("ranges step4!!!!")
 	ranges = make([][]byte, 0, 1)
 	ranges = append(ranges, []byte{})
 
@@ -580,6 +584,7 @@ func (tbl *txnTable) Ranges(ctx context.Context, exprs []*plan.Expr) (ranges [][
 		}
 	}
 
+	logutil.Infof("ranges step5!!!!")
 	err = tbl.rangesOnePart(
 		ctx,
 		part,
@@ -589,6 +594,7 @@ func (tbl *txnTable) Ranges(ctx context.Context, exprs []*plan.Expr) (ranges [][
 		&ranges,
 		tbl.proc,
 	)
+	logutil.Infof("ranges step10!!!!")
 	return
 }
 
@@ -635,6 +641,8 @@ func (tbl *txnTable) rangesOnePart(
 		tbl.lastTS = tbl.db.txn.meta.SnapshotTS
 	}
 
+	logutil.Infof("ranges step6!!!!")
+
 	//blks contains all visible blocks to this txn, namely
 	//includes committed blocks and uncommitted blocks by CN writing S3.
 	blks := make([]catalog.BlockInfo, 0, len(committedblocks))
@@ -656,6 +664,8 @@ func (tbl *txnTable) rangesOnePart(
 	for _, bid := range tbl.GetDirtyBlksIn(state) {
 		dirtyBlks[bid] = struct{}{}
 	}
+
+	logutil.Infof("ranges step7!!!!")
 
 	insertedS3Blks, err := tbl.db.txn.getInsertedBlocksForTable(tbl.db.databaseId, tbl.tableId)
 	if err != nil {
@@ -687,6 +697,8 @@ func (tbl *txnTable) rangesOnePart(
 		}
 	}
 
+	logutil.Infof("ranges step7!!!!")
+
 	var (
 		objMeta  objectio.ObjectMeta
 		zms      []objectio.ZoneMap
@@ -716,6 +728,8 @@ func (tbl *txnTable) rangesOnePart(
 	}
 
 	errCtx := errutil.ContextWithNoReport(ctx, true)
+
+	logutil.Infof("ranges step8!!!!")
 
 	fs, err := fileservice.Get[fileservice.FileService](proc.FileService, defines.SharedFileServiceName)
 	if err != nil {
@@ -787,6 +801,9 @@ func (tbl *txnTable) rangesOnePart(
 		blk.PartitionNum = -1
 		*ranges = append(*ranges, catalog.EncodeBlockInfo(blk))
 	}
+
+	logutil.Infof("ranges step9!!!!")
+
 	blockio.RecordBlockSelectivity(len(*ranges)-1, len(blks))
 	return
 }
