@@ -139,12 +139,6 @@ func initShuffledBats(ap *Argument, bat *batch.Batch, proc *process.Process, reg
 	shuffledBats[regIndex].ShuffleIDX = regIndex
 	for j := range shuffledBats[regIndex].Vecs {
 		v := proc.GetVector(*bat.Vecs[j].GetType())
-		if v.Capacity() < shuffleBatchSize {
-			err := v.PreExtend(shuffleBatchSize, proc.Mp())
-			if err != nil {
-				return err
-			}
-		}
 		shuffledBats[regIndex].Vecs[j] = v
 	}
 	return nil
