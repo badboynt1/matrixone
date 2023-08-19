@@ -183,7 +183,7 @@ func genShuffledBatsByHash(ap *Argument, bat *batch.Batch, proc *process.Process
 }
 
 func sendOneBatch(ap *Argument, proc *process.Process, isEnding bool) process.ExecStatus {
-	threshHold := shuffleBatchSize * 3 / 4
+	threshHold := shuffleBatchSize
 	if isEnding {
 		threshHold = 0
 	}
