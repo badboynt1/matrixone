@@ -15,6 +15,7 @@
 package hashmap
 
 import (
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"unsafe"
 
 	"github.com/matrixorigin/matrixone/pkg/common/mpool"
@@ -70,6 +71,7 @@ func (m *StrHashMap) Free() {
 }
 
 func (m *StrHashMap) PreAlloc(n uint64, mp *mpool.MPool) error {
+	logutil.Infof("!!!!! prealloc to size %v", n)
 	return m.hashMap.ResizeOnDemand(n, mp)
 }
 
