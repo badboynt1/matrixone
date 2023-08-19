@@ -182,8 +182,30 @@ func genShuffledBatsByHash(ap *Argument, bat *batch.Batch, proc *process.Process
 	return nil
 }
 
+func findBiggestBatch(ap *Argument) *batch.Batch {
+	idx := -1
+	for i := range ap.ctr.shuffledBats {
+		if ap.ctr.shuffledBats[i] != nil {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		// all nil
+		return batch.EmptyBatch
+	}
+	for i := range ap.ctr.shuffledBats {
+		if ap.ctr.shuffledBats[i] != nil && ap.ctr.shuffledBats[i].RowCount() > ap.ctr.shuffledBats[idx].RowCount() {
+			idx = i
+		}
+	}
+	bat := ap.ctr.shuffledBats[idx]
+	ap.ctr.shuffledBats[idx] = nil
+	return bat
+}
+
 func sendOneBatch(ap *Argument, proc *process.Process, isEnding bool) process.ExecStatus {
-	threshHold := shuffleBatchSize
+	threshHold := shuffleBatchSize * 3 / 4
 	if isEnding {
 		threshHold = 0
 	}
@@ -201,7 +223,9 @@ func sendOneBatch(ap *Argument, proc *process.Process, isEnding bool) process.Ex
 		}
 	}
 	if !findOneBatch {
-		proc.SetInputBatch(batch.EmptyBatch)
+		//proc.SetInputBatch(batch.EmptyBatch)
+		// find a biggest batch to send. after runtime filter on shuffle join finish, should revert this
+		proc.SetInputBatch(findBiggestBatch(ap))
 	}
 	ap.ctr.state = input
 	if isEnding {
