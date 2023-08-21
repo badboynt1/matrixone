@@ -101,22 +101,22 @@ type server struct {
 	}
 }
 
-var _ buf.Allocator = &SessionAllocator{}
+var _ buf.Allocator = &SessionAllocatorForTest{}
 
-type SessionAllocator struct {
+type SessionAllocatorForTest struct {
 	mp *mpool.MPool
 }
 
-func NewSessionAllocator() *SessionAllocator {
+func NewSessionAllocator() *SessionAllocatorForTest {
 	pool, err := mpool.NewMPool("frontend-goetty-pool-cn-level", 0, mpool.NoFixed)
 	if err != nil {
 		panic(err)
 	}
-	ret := &SessionAllocator{mp: pool}
+	ret := &SessionAllocatorForTest{mp: pool}
 	return ret
 }
 
-func (s *SessionAllocator) Alloc(capacity int) []byte {
+func (s *SessionAllocatorForTest) Alloc(capacity int) []byte {
 	alloc, err := s.mp.Alloc(capacity)
 	if err != nil {
 		panic(err)
@@ -124,7 +124,7 @@ func (s *SessionAllocator) Alloc(capacity int) []byte {
 	return alloc
 }
 
-func (s SessionAllocator) Free(bs []byte) {
+func (s SessionAllocatorForTest) Free(bs []byte) {
 	s.mp.Free(bs)
 }
 
