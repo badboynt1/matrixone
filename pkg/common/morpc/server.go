@@ -17,6 +17,8 @@ package morpc
 import (
 	"context"
 	"fmt"
+	"github.com/fagongzi/goetty/v2/buf"
+	"github.com/matrixorigin/matrixone/pkg/common/mpool"
 	"sync"
 	"time"
 
@@ -99,6 +101,33 @@ type server struct {
 	}
 }
 
+var _ buf.Allocator = &SessionAllocator{}
+
+type SessionAllocator struct {
+	mp *mpool.MPool
+}
+
+func NewSessionAllocator() *SessionAllocator {
+	pool, err := mpool.NewMPool("frontend-goetty-pool-cn-level", 0, mpool.NoFixed)
+	if err != nil {
+		panic(err)
+	}
+	ret := &SessionAllocator{mp: pool}
+	return ret
+}
+
+func (s *SessionAllocator) Alloc(capacity int) []byte {
+	alloc, err := s.mp.Alloc(capacity)
+	if err != nil {
+		panic(err)
+	}
+	return alloc
+}
+
+func (s SessionAllocator) Free(bs []byte) {
+	s.mp.Free(bs)
+}
+
 // NewRPCServer create rpc server with options. After the rpc server starts, one link corresponds to two
 // goroutines, one read and one write. All messages to be written are first written to a buffer chan and
 // sent to the client by the write goroutine.
@@ -117,7 +146,8 @@ func NewRPCServer(name, address string, codec Codec, options ...ServerOption) (R
 
 	s.options.goettyOptions = append(s.options.goettyOptions,
 		goetty.WithSessionCodec(codec),
-		goetty.WithSessionLogger(s.logger))
+		goetty.WithSessionLogger(s.logger),
+		goetty.WithSessionAllocator(NewSessionAllocator()))
 
 	app, err := goetty.NewApplication(
 		s.address,
