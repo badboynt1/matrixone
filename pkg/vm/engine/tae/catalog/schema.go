@@ -560,7 +560,7 @@ func (s *Schema) ReadFromBatch(bat *containers.Batch, offset int, targetTid uint
 		data := bat.GetVectorByName((pkgcatalog.SystemColAttr_Type)).Get(offset).([]byte)
 		types.Decode(data, &def.Type)
 		nullable := bat.GetVectorByName((pkgcatalog.SystemColAttr_NullAbility)).Get(offset).(int8)
-		def.NullAbility = i82bool(nullable)
+		def.NullAbility = !i82bool(nullable)
 		isHidden := bat.GetVectorByName((pkgcatalog.SystemColAttr_IsHidden)).Get(offset).(int8)
 		def.Hidden = i82bool(isHidden)
 		isClusterBy := bat.GetVectorByName((pkgcatalog.SystemColAttr_IsClusterBy)).Get(offset).(int8)
@@ -586,7 +586,6 @@ func (s *Schema) ReadFromBatch(bat *containers.Batch, offset int, targetTid uint
 		}
 		offset++
 	}
-	s.Finalize(true)
 	return offset
 }
 
@@ -949,7 +948,7 @@ func MockSchemaAll(colCnt int, pkIdx int, from ...int) *Schema {
 		}
 		name := fmt.Sprintf("%s%d", prefix, i)
 		var typ types.Type
-		switch i % 18 {
+		switch i % 20 {
 		case 0:
 			typ = types.T_int8.ToType()
 			typ.Width = 8
@@ -1004,6 +1003,12 @@ func MockSchemaAll(colCnt int, pkIdx int, from ...int) *Schema {
 		case 17:
 			typ = types.T_bool.ToType()
 			typ.Width = 8
+		case 18:
+			typ = types.T_array_float32.ToType()
+			typ.Width = 100
+		case 19:
+			typ = types.T_array_float64.ToType()
+			typ.Width = 100
 		}
 
 		if pkIdx == i {

@@ -90,7 +90,7 @@ func (w *BlockWriter) WriteBatch(batch *batch.Batch) (objectio.BlockObject, erro
 		if w.isSetPK && w.pk == uint16(i) {
 			isPK = true
 		}
-		columnData := containers.ToDNVector(vec)
+		columnData := containers.ToTNVector(vec)
 		// update null count and distinct value
 		w.objMetaBuilder.InspectVector(i, columnData, isPK)
 
@@ -124,9 +124,12 @@ func (w *BlockWriter) WriteBatch(batch *batch.Batch) (objectio.BlockObject, erro
 	return block, nil
 }
 
-// WriteBatch write a fixed schema batch, usually not a user table
-func (w *BlockWriter) WriteBatchWithOutIndex(batch *batch.Batch) (objectio.BlockObject, error) {
-	return w.writer.WriteWithoutSeqnum(batch)
+func (w *BlockWriter) WriteTombstoneBatch(batch *batch.Batch) (objectio.BlockObject, error) {
+	return w.writer.WriteTombstone(batch)
+}
+
+func (w *BlockWriter) WriteSubBatch(batch *batch.Batch, dataType objectio.DataMetaType) (objectio.BlockObject, error) {
+	return w.writer.WriteSubBlock(batch, dataType)
 }
 
 func (w *BlockWriter) Sync(ctx context.Context) ([]objectio.BlockObject, objectio.Extent, error) {

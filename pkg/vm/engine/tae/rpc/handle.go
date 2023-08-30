@@ -60,7 +60,6 @@ const (
 	MAX_TXN_COMMIT_LATENCY  = time.Minute * 2
 )
 
-// TODO::GC the abandoned txn.
 type Handle struct {
 	db *db.DB
 	mu struct {
@@ -314,6 +313,14 @@ func (h *Handle) HandlePrepare(
 	txnCtx, ok := h.mu.txnCtxs[string(meta.GetID())]
 	h.mu.RUnlock()
 	var txn txnif.AsyncTxn
+	defer func() {
+		if ok {
+			//delete the txn's context.
+			h.mu.Lock()
+			delete(h.mu.txnCtxs, string(meta.GetID()))
+			h.mu.Unlock()
+		}
+	}()
 	if ok {
 		//handle pre-commit write for 2PC
 		txn, err = h.db.GetOrCreateTxnWithMeta(nil, meta.GetID(),
@@ -327,18 +334,14 @@ func (h *Handle) HandlePrepare(
 	if err != nil {
 		return timestamp.Timestamp{}, err
 	}
-	participants := make([]uint64, 0, len(meta.GetDNShards()))
-	for _, shard := range meta.GetDNShards() {
+	participants := make([]uint64, 0, len(meta.GetTNShards()))
+	for _, shard := range meta.GetTNShards() {
 		participants = append(participants, shard.GetShardID())
 	}
 	txn.SetParticipants(participants)
 	var ts types.TS
 	ts, err = txn.Prepare(ctx)
 	pts = ts.ToTimestamp()
-	//delete the txn's context.
-	h.mu.Lock()
-	delete(h.mu.txnCtxs, string(meta.GetID()))
-	h.mu.Unlock()
 	return
 }
 
@@ -419,10 +422,40 @@ func (h *Handle) HandleForceCheckpoint(
 	return nil, err
 }
 
-func (h *Handle) HandleInspectDN(
+func (h *Handle) HandleBackup(
 	ctx context.Context,
 	meta txn.TxnMeta,
-	req *db.InspectDN,
+	req *db.Checkpoint,
+	resp *api.SyncLogTailResp) (cb func(), err error) {
+
+	timeout := req.FlushDuration
+
+	currTs := types.BuildTS(time.Now().UTC().UnixNano(), 0)
+	err = h.db.ForceCheckpoint(ctx, currTs, timeout)
+	if err != nil {
+		return nil, err
+	}
+	currTs = types.BuildTS(time.Now().UTC().UnixNano(), 0)
+	err = h.db.ForceCheckpoint(ctx, currTs, timeout)
+	if err != nil {
+		return nil, err
+	}
+	data := h.db.BGCheckpointRunner.GetAllCheckpoints()
+	var locations string
+	for i := range data {
+		locations += data[i].GetLocation().String()
+		locations += ":"
+		locations += fmt.Sprintf("%d", data[i].GetVersion())
+		locations += ";"
+	}
+	resp.CkpLocation = locations
+	return nil, err
+}
+
+func (h *Handle) HandleInspectTN(
+	ctx context.Context,
+	meta txn.TxnMeta,
+	req *db.InspectTN,
 	resp *db.InspectResp) (cb func(), err error) {
 	args, _ := shlex.Split(req.Operation)
 	common.DoIfDebugEnabled(func() {
@@ -448,21 +481,8 @@ func (h *Handle) prefetchDeleteRowID(ctx context.Context,
 		return nil
 	}
 	//for loading deleted rowid.
-	db, err := h.db.Catalog.GetDatabaseByID(req.DatabaseId)
-	if err != nil {
-		return err
-	}
-	tbl, err := db.GetTableEntryByID(req.TableID)
-	if err != nil {
-		return err
-	}
-	var version uint32
-	if req.Schema != nil {
-		version = req.Schema.Version
-	}
-	schema := tbl.GetVersionSchema(version)
-	pkIdx := schema.GetPrimaryKey().Idx
 	columnIdx := 0
+	pkIdx := 1
 	//start loading jobs asynchronously,should create a new root context.
 	loc, err := blockio.EncodeLocationFromString(req.DeltaLocs[0])
 	if err != nil {
@@ -478,7 +498,7 @@ func (h *Handle) prefetchDeleteRowID(ctx context.Context,
 		if err != nil {
 			return err
 		}
-		pref.AddBlock([]uint16{uint16(columnIdx), uint16(pkIdx)}, []uint16{location.ID()})
+		pref.AddBlockWithType([]uint16{uint16(columnIdx), uint16(pkIdx)}, []uint16{location.ID()}, uint16(objectio.SchemaTombstone))
 	}
 	return blockio.PrefetchWithMerged(pref)
 }
@@ -572,9 +592,7 @@ func (h *Handle) HandlePreCommitWrite(
 	req *api.PrecommitWriteCmd,
 	resp *api.SyncLogTailResp) (err error) {
 	var e any
-
 	es := req.EntryList
-
 	for len(es) > 0 {
 		e, es, err = catalog.ParseEntryList(es)
 		if err != nil {
@@ -675,7 +693,7 @@ func (h *Handle) HandlePreCommitWrite(
 				TableName:    pe.GetTableName(),
 				FileName:     pe.GetFileName(),
 				Batch:        moBat,
-				PkCheck:      db.PKCheckType(pe.GetPkCheckByDn()),
+				PkCheck:      db.PKCheckType(pe.GetPkCheckByTn()),
 			}
 			if req.FileName != "" {
 				rows := catalog.GenRows(req.Batch)
@@ -929,7 +947,7 @@ func (h *Handle) HandleWrite(
 			}
 			var ok bool
 			var bat *batch.Batch
-			bat, err = blockio.LoadColumns(
+			bat, err = blockio.LoadTombstoneColumns(
 				ctx,
 				[]uint16{uint16(rowidIdx), uint16(pkIdx)},
 				nil,
@@ -957,9 +975,9 @@ func (h *Handle) HandleWrite(
 			} else {
 				logutil.Warnf("multiply blocks in one deltalocation")
 			}
-			rowIDVec := containers.ToDNVector(bat.Vecs[0])
+			rowIDVec := containers.ToTNVector(bat.Vecs[0])
 			defer rowIDVec.Close()
-			pkVec := containers.ToDNVector(bat.Vecs[1])
+			pkVec := containers.ToTNVector(bat.Vecs[1])
 			//defer pkVec.Close()
 			if err = tb.DeleteByPhyAddrKeys(rowIDVec, pkVec); err != nil {
 				return
@@ -970,9 +988,9 @@ func (h *Handle) HandleWrite(
 	if len(req.Batch.Vecs) != 2 {
 		panic(fmt.Sprintf("req.Batch.Vecs length is %d, should be 2", len(req.Batch.Vecs)))
 	}
-	rowIDVec := containers.ToDNVector(req.Batch.GetVector(0))
+	rowIDVec := containers.ToTNVector(req.Batch.GetVector(0))
 	defer rowIDVec.Close()
-	pkVec := containers.ToDNVector(req.Batch.GetVector(1))
+	pkVec := containers.ToTNVector(req.Batch.GetVector(1))
 	//defer pkVec.Close()
 	err = tb.DeleteByPhyAddrKeys(rowIDVec, pkVec)
 	return

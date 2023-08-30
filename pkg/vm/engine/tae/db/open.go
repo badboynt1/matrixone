@@ -122,6 +122,7 @@ func Open(ctx context.Context, dirname string, opts *options.Options) (db *DB, e
 		int(db.Opts.LogtailCfg.PageSize),
 		db.TxnMgr.Now,
 	)
+	db.Runtime.Now = db.TxnMgr.Now
 	db.TxnMgr.CommitListener.AddTxnCommitListener(db.LogtailMgr)
 	db.TxnMgr.Start(opts.Ctx)
 	db.LogtailMgr.Start()
@@ -134,6 +135,7 @@ func Open(ctx context.Context, dirname string, opts *options.Options) (db *DB, e
 		checkpoint.WithFlushInterval(opts.CheckpointCfg.FlushInterval),
 		checkpoint.WithCollectInterval(opts.CheckpointCfg.ScanInterval),
 		checkpoint.WithMinCount(int(opts.CheckpointCfg.MinCount)),
+		checkpoint.WithCheckpointBlockRows(opts.CheckpointCfg.BlockRows),
 		checkpoint.WithMinIncrementalInterval(opts.CheckpointCfg.IncrementalInterval),
 		checkpoint.WithGlobalMinCount(int(opts.CheckpointCfg.GlobalMinCount)),
 		checkpoint.WithGlobalVersionInterval(opts.CheckpointCfg.GlobalVersionInterval))
@@ -185,6 +187,7 @@ func Open(ctx context.Context, dirname string, opts *options.Options) (db *DB, e
 			opts.CheckpointCfg.FlushInterval,
 			func(_ context.Context) (err error) {
 				db.Runtime.PrintVectorPoolUsage()
+				db.Runtime.TransferDelsMap.Prune(opts.TransferTableTTL)
 				transferTable.RunTTL(time.Now())
 				return
 			}),

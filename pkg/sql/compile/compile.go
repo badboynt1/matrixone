@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	mokafka "github.com/matrixorigin/matrixone/pkg/stream/adapter/kafka"
 	"math"
 	"net"
 	"runtime"
@@ -62,6 +63,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/sql/parsers/tree"
 	plan2 "github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"github.com/matrixorigin/matrixone/pkg/sql/util"
+	util2 "github.com/matrixorigin/matrixone/pkg/util"
 	"github.com/matrixorigin/matrixone/pkg/util/executor"
 	"github.com/matrixorigin/matrixone/pkg/util/trace"
 	"github.com/matrixorigin/matrixone/pkg/vm"
@@ -97,7 +99,6 @@ var analPool = sync.Pool{
 func New(addr, db string, sql string, tenant, uid string, ctx context.Context,
 	e engine.Engine, proc *process.Process, stmt tree.Statement, isInternal bool, cnLabel map[string]string) *Compile {
 	c := pool.Get().(*Compile)
-	c.clear()
 	c.e = e
 	c.db = db
 	c.ctx = ctx
@@ -113,6 +114,22 @@ func New(addr, db string, sql string, tenant, uid string, ctx context.Context,
 	c.cnLabel = cnLabel
 	c.runtimeFilterReceiverMap = make(map[int32]chan *pipeline.RuntimeFilter)
 	return c
+}
+
+func putCompile(c *Compile) {
+	if c == nil {
+		return
+	}
+	if c.anal != nil {
+		for i := range c.anal.analInfos {
+			analPool.Put(c.anal.analInfos[i])
+		}
+		c.anal.analInfos = nil
+	}
+
+	c.proc.CleanValueScanBatchs()
+	c.clear()
+	pool.Put(c)
 }
 
 func (c *Compile) clear() {
@@ -145,7 +162,7 @@ func (c *Compile) clear() {
 	for k := range c.cnLabel {
 		delete(c.cnLabel, k)
 	}
-	c.s3CounterSet.FileService.ResetS3()
+	c.counterSet = perfcounter.CounterSet{}
 }
 
 // helper function to judge if init temporary engine is needed
@@ -185,7 +202,7 @@ func (c *Compile) Compile(ctx context.Context, pn *plan.Plan, u any, fill func(a
 	}()
 
 	// with values
-	c.proc.Ctx = perfcounter.WithCounterSet(c.proc.Ctx, &c.s3CounterSet)
+	c.proc.Ctx = perfcounter.WithCounterSet(c.proc.Ctx, &c.counterSet)
 	c.ctx = c.proc.Ctx
 
 	// session info and callback function to write back query result.
@@ -205,6 +222,7 @@ func (c *Compile) Compile(ctx context.Context, pn *plan.Plan, u any, fill func(a
 	c.proc.Ctx = context.WithValue(c.proc.Ctx, defines.EngineKey{}, c.e)
 	// generate logic pipeline for query.
 	c.scope, err = c.compileScope(ctx, pn)
+
 	if err != nil {
 		return err
 	}
@@ -224,7 +242,7 @@ func (c *Compile) setAffectedRows(n uint64) {
 	c.affectRows.Store(n)
 }
 
-func (c *Compile) GetAffectedRows() uint64 {
+func (c *Compile) getAffectedRows() uint64 {
 	affectRows := c.affectRows.Load()
 	return affectRows
 }
@@ -326,20 +344,17 @@ func (c *Compile) run(s *Scope) error {
 }
 
 // Run is an important function of the compute-layer, it executes a single sql according to its scope
-func (c *Compile) Run(_ uint64) error {
+func (c *Compile) Run(_ uint64) (*util2.RunResult, error) {
+	var cc *Compile
 	_, task := gotrace.NewTask(context.TODO(), "pipeline.Run")
 	defer task.End()
 	defer func() {
-		if c.anal != nil {
-			for i := range c.anal.analInfos {
-				analPool.Put(c.anal.analInfos[i])
-			}
-			c.anal.analInfos = nil
-		}
-
-		c.proc.CleanValueScanBatchs()
-		pool.Put(c)
+		putCompile(c)
+		putCompile(cc)
 	}()
+	result := &util2.RunResult{
+		AffectRows: 0,
+	}
 	if c.proc.TxnOperator != nil {
 		c.proc.TxnOperator.GetWorkspace().IncrSQLCount()
 		c.proc.TxnOperator.ResetRetry(false)
@@ -348,23 +363,24 @@ func (c *Compile) Run(_ uint64) error {
 		c.fatalLog(0, err)
 
 		//  if the error is ErrTxnNeedRetry and the transaction is RC isolation, we need to retry the statement
-		if moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetry) &&
+		if (moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetry) ||
+			moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetryWithDefChanged)) &&
 			c.proc.TxnOperator.Txn().IsRCIsolation() {
 			c.proc.TxnOperator.ResetRetry(true)
 			c.proc.TxnOperator.GetWorkspace().IncrSQLCount()
 
 			// clear the workspace of the failed statement
-			if err = c.proc.TxnOperator.GetWorkspace().RollbackLastStatement(c.ctx); err != nil {
-				return err
+			if e := c.proc.TxnOperator.GetWorkspace().RollbackLastStatement(c.ctx); e != nil {
+				return nil, e
 			}
 			//  increase the statement id
-			if err = c.proc.TxnOperator.GetWorkspace().IncrStatementID(c.ctx, false); err != nil {
-				return err
+			if e := c.proc.TxnOperator.GetWorkspace().IncrStatementID(c.ctx, false); e != nil {
+				return nil, e
 			}
 
 			// FIXME: the current retry method is quite bad, the overhead is relatively large, and needs to be
 			// improved to refresh expression in the future.
-			cc := New(
+			cc = New(
 				c.addr,
 				c.db,
 				c.sql,
@@ -376,24 +392,34 @@ func (c *Compile) Run(_ uint64) error {
 				c.stmt,
 				c.isInternal,
 				c.cnLabel)
+			if moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetryWithDefChanged) {
+				pn, err := c.buildPlanFunc()
+				if err != nil {
+					return nil, err
+				}
+				c.pn = pn
+			}
 			if err := cc.Compile(c.proc.Ctx, c.pn, c.u, c.fill); err != nil {
 				c.fatalLog(1, err)
-				return err
+				return nil, err
 			}
 			if err := cc.runOnce(); err != nil {
 				c.fatalLog(1, err)
-				return err
+				return nil, err
 			}
 			// set affectedRows to old compile to return
-			c.setAffectedRows(cc.GetAffectedRows())
-			return c.proc.TxnOperator.GetWorkspace().Adjust()
+			c.setAffectedRows(cc.getAffectedRows())
+			result.AffectRows = cc.getAffectedRows()
+			return result, c.proc.TxnOperator.GetWorkspace().Adjust()
 		}
-		return err
+		return nil, err
 	}
+
+	result.AffectRows = c.getAffectedRows()
 	if c.proc.TxnOperator != nil {
-		return c.proc.TxnOperator.GetWorkspace().Adjust()
+		return result, c.proc.TxnOperator.GetWorkspace().Adjust()
 	}
-	return nil
+	return result, nil
 }
 
 // run once
@@ -813,6 +839,13 @@ func (c *Compile) compilePlanScope(ctx context.Context, step int32, curNodeIdx i
 
 		// RelationName
 		return c.compileSort(n, c.compileProjection(n, c.compileRestrict(n, ss))), nil
+	case plan.Node_STREAM_SCAN:
+		ss, err := c.compileStreamScan(ctx, n)
+		if err != nil {
+			return nil, err
+		}
+
+		return c.compileSort(n, c.compileProjection(n, c.compileRestrict(n, ss))), nil
 	case plan.Node_FILTER, plan.Node_PROJECT, plan.Node_PRE_DELETE:
 		curr := c.anal.curr
 		c.setAnalyzeCurrent(nil, int(n.Children[0]))
@@ -965,20 +998,15 @@ func (c *Compile) compilePlanScope(ctx context.Context, step int32, curNodeIdx i
 		if err != nil {
 			return nil, err
 		}
-		rs := c.newMergeScope(ss)
-		rs.Magic = Merge
-		c.setAnalyzeCurrent([]*Scope{rs}, c.anal.curr)
-		onDuplicateKeyArg, err := constructOnduplicateKey(n, c.e)
-		if err != nil {
-			return nil, err
-		}
-		rs.Instructions = append(rs.Instructions, vm.Instruction{
-			Op:  vm.OnDuplicateKey,
-			Arg: onDuplicateKeyArg,
-		})
-		ss = []*Scope{rs}
 		c.setAnalyzeCurrent(ss, curr)
-		return ss, nil
+
+		rs := c.newMergeScope(ss)
+		rs.Instructions[0] = vm.Instruction{
+			Op:  vm.OnDuplicateKey,
+			Idx: c.anal.curr,
+			Arg: constructOnduplicateKey(n, c.e),
+		}
+		return []*Scope{rs}, nil
 	case plan.Node_PRE_INSERT_UK:
 		curr := c.anal.curr
 		ss, err := c.compilePlanScope(ctx, step, n.Children[0], ns)
@@ -1188,7 +1216,7 @@ func (c *Compile) compilePlanScope(ctx context.Context, step int32, curNodeIdx i
 			r.Ctx = rs.Proc.Ctx
 		}
 		rs.Proc.Reg.MergeReceivers = receivers
-		return []*Scope{rs}, nil
+		return c.compileProjection(n, []*Scope{rs}), nil
 	case plan.Node_RECURSIVE_SCAN:
 		receivers := make([]*process.WaitRegister, len(n.SourceStep))
 		for i, step := range n.SourceStep {
@@ -1228,7 +1256,7 @@ func (c *Compile) compilePlanScope(ctx context.Context, step int32, curNodeIdx i
 			r.Ctx = rs.Proc.Ctx
 		}
 		rs.Proc.Reg.MergeReceivers = receivers
-		return []*Scope{rs}, nil
+		return c.compileSort(n, []*Scope{rs}), nil
 	case plan.Node_SINK:
 		receivers := c.getStepRegs(step)
 		if len(receivers) == 0 {
@@ -1241,7 +1269,7 @@ func (c *Compile) compilePlanScope(ctx context.Context, step int32, curNodeIdx i
 		rs := c.newMergeScope(ss)
 		rs.appendInstruction(vm.Instruction{
 			Op:  vm.Dispatch,
-			Arg: constructDispatchLocal(true, true, len(receivers) > 1, receivers),
+			Arg: constructDispatchLocal(true, true, n.RecursiveSink, receivers),
 		})
 
 		return []*Scope{rs}, nil
@@ -1298,6 +1326,64 @@ func (c *Compile) constructLoadMergeScope() *Scope {
 	return ds
 }
 
+func (c *Compile) compileStreamScan(ctx context.Context, n *plan.Node) ([]*Scope, error) {
+	_, span := trace.Start(ctx, "compileStreamScan")
+	defer span.End()
+	configs := make(map[string]interface{})
+	for _, def := range n.TableDef.Defs {
+		switch v := def.Def.(type) {
+		case *plan.TableDef_DefType_Properties:
+			for _, p := range v.Properties.Properties {
+				configs[p.Key] = p.Value
+			}
+		}
+	}
+
+	end, err := mokafka.GetStreamCurrentSize(ctx, configs, mokafka.NewKafkaAdapter)
+	if err != nil {
+		return nil, err
+	}
+	ps := calculatePartitions(0, end, int64(ncpu))
+
+	ss := make([]*Scope, len(ps))
+	for i := range ss {
+		ss[i] = &Scope{
+			Magic:    Normal,
+			NodeInfo: engine.Node{Addr: c.addr, Mcpu: ncpu},
+			Proc:     process.NewWithAnalyze(c.proc, c.ctx, 0, c.anal.Nodes()),
+		}
+		ss[i].appendInstruction(vm.Instruction{
+			Op:      vm.Stream,
+			Idx:     c.anal.curr,
+			IsFirst: c.anal.isFirst,
+			Arg:     constructStream(n, ps[i]),
+		})
+	}
+	return ss, nil
+}
+
+const StreamMaxInterval = 8192
+
+func calculatePartitions(start, end, n int64) [][2]int64 {
+	var ps [][2]int64
+	interval := (end - start) / n
+	if interval < StreamMaxInterval {
+		interval = StreamMaxInterval
+	}
+	var r int64
+	l := start
+	for i := int64(0); i < n; i++ {
+		r = l + interval
+		if r >= end {
+			ps = append(ps, [2]int64{l, end})
+			break
+		}
+		ps = append(ps, [2]int64{l, r})
+		l = r
+	}
+	return ps
+}
+
 func (c *Compile) compileExternScan(ctx context.Context, n *plan.Node) ([]*Scope, error) {
 	ctx, span := trace.Start(ctx, "compileExternScan")
 	defer span.End()
@@ -1312,8 +1398,8 @@ func (c *Compile) compileExternScan(ctx context.Context, n *plan.Node) ([]*Scope
 		if err != nil {
 			return nil, err
 		}
-		err = lockTable(c.e, c.proc, rel)
-		if err != nil && !moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetry) {
+		err = lockTable(c.e, c.proc, rel, false)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -1673,7 +1759,7 @@ func (c *Compile) compileUnion(n *plan.Node, ss []*Scope, children []*Scope) []*
 		rs[i].Instructions = append(rs[i].Instructions, vm.Instruction{
 			Op:  vm.Group,
 			Idx: c.anal.curr,
-			Arg: constructGroup(c.ctx, gn, n, i, len(rs), true, c.proc),
+			Arg: constructGroup(c.ctx, gn, n, i, len(rs), true, 0, c.proc),
 		})
 		if isSameCN(rs[i].NodeInfo.Addr, c.addr) {
 			idx = i
@@ -1682,7 +1768,7 @@ func (c *Compile) compileUnion(n *plan.Node, ss []*Scope, children []*Scope) []*
 	mergeChildren := c.newMergeScope(ss)
 	mergeChildren.appendInstruction(vm.Instruction{
 		Op:  vm.Dispatch,
-		Arg: constructDispatch(0, rs, c.addr, n),
+		Arg: constructDispatch(0, rs, c.addr, n, false),
 	})
 	rs[idx].PreScopes = append(rs[idx].PreScopes, mergeChildren)
 	return rs
@@ -2191,7 +2277,7 @@ func (c *Compile) compileMergeGroup(n *plan.Node, ss []*Scope, ns []*plan.Node) 
 			Op:      vm.Group,
 			Idx:     c.anal.curr,
 			IsFirst: c.anal.isFirst,
-			Arg:     constructGroup(c.ctx, n, ns[n.Children[0]], 0, 0, false, c.proc),
+			Arg:     constructGroup(c.ctx, n, ns[n.Children[0]], 0, 0, false, 0, c.proc),
 		})
 	}
 	c.anal.isFirst = false
@@ -2222,7 +2308,7 @@ func (c *Compile) constructShuffleAndDispatch(ss, children []*Scope, n *plan.Nod
 
 			ss[i].appendInstruction(vm.Instruction{
 				Op:  vm.Dispatch,
-				Arg: constructDispatch(j, children, ss[i].NodeInfo.Addr, n),
+				Arg: constructDispatch(j, children, ss[i].NodeInfo.Addr, n, false),
 			})
 			j++
 			ss[i].IsEnd = true
@@ -2245,7 +2331,7 @@ func (c *Compile) compileShuffleGroup(n *plan.Node, ss []*Scope, ns []*plan.Node
 				Op:      vm.Group,
 				Idx:     c.anal.curr,
 				IsFirst: c.anal.isFirst,
-				Arg:     constructGroup(c.ctx, n, ns[n.Children[0]], 0, 0, true, c.proc),
+				Arg:     constructGroup(c.ctx, n, ns[n.Children[0]], 0, 0, true, len(ss), c.proc),
 			})
 		}
 		ss = c.compileProjection(n, c.compileRestrict(n, ss))
@@ -2269,7 +2355,7 @@ func (c *Compile) compileShuffleGroup(n *plan.Node, ss []*Scope, ns []*plan.Node
 				Op:      vm.Group,
 				Idx:     c.anal.curr,
 				IsFirst: currentIsFirst,
-				Arg:     constructGroup(c.ctx, n, ns[n.Children[0]], 0, 0, true, c.proc),
+				Arg:     constructGroup(c.ctx, n, ns[n.Children[0]], 0, 0, true, len(children), c.proc),
 			})
 		}
 		children = c.compileProjection(n, c.compileRestrict(n, children))
@@ -2292,7 +2378,7 @@ func (c *Compile) compileShuffleGroup(n *plan.Node, ss []*Scope, ns []*plan.Node
 			Op:      vm.Dispatch,
 			Idx:     c.anal.curr,
 			IsFirst: currentIsFirst,
-			Arg:     constructDispatch(0, children, c.addr, n),
+			Arg:     constructDispatch(0, children, c.addr, n, false),
 		})
 
 		appendIdx := 0
@@ -2324,7 +2410,7 @@ func (c *Compile) compileShuffleGroup(n *plan.Node, ss []*Scope, ns []*plan.Node
 				Op:      vm.Group,
 				Idx:     c.anal.curr,
 				IsFirst: currentIsFirst,
-				Arg:     constructGroup(c.ctx, n, ns[n.Children[0]], 0, 0, true, c.proc),
+				Arg:     constructGroup(c.ctx, n, ns[n.Children[0]], 0, 0, true, len(children), c.proc),
 			})
 		}
 		children = c.compileProjection(n, c.compileRestrict(n, children))
@@ -2540,7 +2626,7 @@ func (c *Compile) newJoinScopeListWithBucket(rs, ss, children []*Scope, n *plan.
 	leftMerge := c.newMergeScope(ss)
 	leftMerge.appendInstruction(vm.Instruction{
 		Op:  vm.Dispatch,
-		Arg: constructDispatch(0, rs, c.addr, n),
+		Arg: constructDispatch(0, rs, c.addr, n, false),
 	})
 	leftMerge.IsEnd = true
 
@@ -2549,7 +2635,7 @@ func (c *Compile) newJoinScopeListWithBucket(rs, ss, children []*Scope, n *plan.
 	rightMerge := c.newMergeScope(children)
 	rightMerge.appendInstruction(vm.Instruction{
 		Op:  vm.Dispatch,
-		Arg: constructDispatch(1, rs, c.addr, n),
+		Arg: constructDispatch(1, rs, c.addr, n, false),
 	})
 	rightMerge.IsEnd = true
 
@@ -2598,7 +2684,7 @@ func (c *Compile) newBroadcastJoinScopeList(ss []*Scope, children []*Scope, n *p
 
 	mergeChildren.appendInstruction(vm.Instruction{
 		Op:  vm.Dispatch,
-		Arg: constructDispatch(1, rs, c.addr, n),
+		Arg: constructDispatch(1, rs, c.addr, n, false),
 	})
 	mergeChildren.IsEnd = true
 	rs[idx].PreScopes = append(rs[idx].PreScopes, mergeChildren)
@@ -2608,6 +2694,10 @@ func (c *Compile) newBroadcastJoinScopeList(ss []*Scope, children []*Scope, n *p
 
 func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) ([]*Scope, []*Scope) {
 	single := len(c.cnList) <= 1
+	if single {
+		n.Stats.HashmapStats.ShuffleTypeForMultiCN = plan.ShuffleTypeForMultiCN_Simple
+	}
+
 	var parent []*Scope
 	children := make([]*Scope, 0, len(c.cnList))
 	lnum := len(left)
@@ -2642,7 +2732,7 @@ func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) ([
 		})
 		scp.appendInstruction(vm.Instruction{
 			Op:  vm.Dispatch,
-			Arg: constructDispatch(i, children, scp.NodeInfo.Addr, n),
+			Arg: constructDispatch(i, children, scp.NodeInfo.Addr, n, true),
 		})
 		scp.IsEnd = true
 
@@ -2669,7 +2759,7 @@ func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) ([
 		})
 		scp.appendInstruction(vm.Instruction{
 			Op:  vm.Dispatch,
-			Arg: constructDispatch(i+lnum, children, scp.NodeInfo.Addr, n),
+			Arg: constructDispatch(i+lnum, children, scp.NodeInfo.Addr, n, false),
 		})
 		scp.IsEnd = true
 
@@ -2821,13 +2911,13 @@ func (c *Compile) initAnalyze(qry *plan.Query) {
 
 func (c *Compile) fillAnalyzeInfo() {
 	// record the number of s3 requests
-	c.anal.S3IOInputCount(c.anal.curr, c.s3CounterSet.FileService.S3.Put.Load())
-	c.anal.S3IOInputCount(c.anal.curr, c.s3CounterSet.FileService.S3.List.Load())
+	c.anal.S3IOInputCount(c.anal.curr, c.counterSet.FileService.S3.Put.Load())
+	c.anal.S3IOInputCount(c.anal.curr, c.counterSet.FileService.S3.List.Load())
 
-	c.anal.S3IOOutputCount(c.anal.curr, c.s3CounterSet.FileService.S3.Head.Load())
-	c.anal.S3IOOutputCount(c.anal.curr, c.s3CounterSet.FileService.S3.Get.Load())
-	c.anal.S3IOOutputCount(c.anal.curr, c.s3CounterSet.FileService.S3.Delete.Load())
-	c.anal.S3IOOutputCount(c.anal.curr, c.s3CounterSet.FileService.S3.DeleteMulti.Load())
+	c.anal.S3IOOutputCount(c.anal.curr, c.counterSet.FileService.S3.Head.Load())
+	c.anal.S3IOOutputCount(c.anal.curr, c.counterSet.FileService.S3.Get.Load())
+	c.anal.S3IOOutputCount(c.anal.curr, c.counterSet.FileService.S3.Delete.Load())
+	c.anal.S3IOOutputCount(c.anal.curr, c.counterSet.FileService.S3.DeleteMulti.Load())
 
 	for i, anal := range c.anal.analInfos {
 		atomic.StoreInt64(&c.anal.qry.Nodes[i].AnalyzeInfo.InputRows, atomic.LoadInt64(&anal.InputRows))
@@ -3099,6 +3189,7 @@ func shuffleBlocksByHash(c *Compile, ranges [][]byte, nodes engine.Nodes) {
 }
 
 func shuffleBlocksByRange(c *Compile, ranges [][]byte, n *plan.Node, nodes engine.Nodes) error {
+	var objDataMeta objectio.ObjectDataMeta
 	var objMeta objectio.ObjectMeta
 
 	for i, blk := range ranges {
@@ -3108,12 +3199,13 @@ func shuffleBlocksByRange(c *Compile, ranges [][]byte, n *plan.Node, nodes engin
 		if err != nil {
 			return err
 		}
-		if !objectio.IsSameObjectLocVsMeta(location, objMeta) {
-			if objMeta, err = objectio.FastLoadObjectMeta(c.ctx, &location, fs); err != nil {
+		if !objectio.IsSameObjectLocVsMeta(location, objDataMeta) {
+			if objMeta, err = objectio.FastLoadObjectMeta(c.ctx, &location, false, fs); err != nil {
 				return err
 			}
+			objDataMeta = objMeta.MustDataMeta()
 		}
-		blkMeta := objMeta.GetBlockMeta(uint32(location.ID()))
+		blkMeta := objDataMeta.GetBlockMeta(uint32(location.ID()))
 		zm := blkMeta.MustGetColumn(uint16(n.Stats.HashmapStats.ShuffleColIdx)).ZoneMap()
 		index := plan2.GetRangeShuffleIndexForZM(n.Stats.HashmapStats.ShuffleColMin, n.Stats.HashmapStats.ShuffleColMax, zm, uint64(len(c.cnList)))
 		nodes[index].Data = append(nodes[index].Data, blk)
@@ -3305,6 +3397,7 @@ func (c *Compile) fatalLog(retry int, err error) {
 		return
 	}
 	fatal := moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetry) ||
+		moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetryWithDefChanged) ||
 		moerr.IsMoErrCode(err, moerr.ErrTxnWWConflict) ||
 		moerr.IsMoErrCode(err, moerr.ErrDuplicateEntry) ||
 		moerr.IsMoErrCode(err, moerr.ER_DUP_ENTRY) ||
@@ -3312,7 +3405,9 @@ func (c *Compile) fatalLog(retry int, err error) {
 	if !fatal {
 		return
 	}
-	if retry == 0 && moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetry) {
+	if retry == 0 &&
+		(moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetry) ||
+			moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetryWithDefChanged)) {
 		return
 	}
 
@@ -3320,4 +3415,8 @@ func (c *Compile) fatalLog(retry int, err error) {
 		hex.EncodeToString(c.proc.TxnOperator.Txn().ID),
 		retry,
 		err.Error())
+}
+
+func (c *Compile) SetBuildPlanFunc(buildPlanFunc func() (*plan2.Plan, error)) {
+	c.buildPlanFunc = buildPlanFunc
 }

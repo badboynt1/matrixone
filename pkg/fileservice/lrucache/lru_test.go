@@ -22,60 +22,56 @@ import (
 )
 
 func TestLRU(t *testing.T) {
-	l := New[int, Bytes](1, nil, nil)
+	l := New[int, Bytes](1, nil, nil, nil)
 	ctx := context.Background()
 
-	l.Set(ctx, 1, []byte{42}, false)
+	l.Set(ctx, 1, []byte{42})
 	_, ok := l.kv[1]
 	assert.True(t, ok)
 	_, ok = l.kv[2]
 	assert.False(t, ok)
-	val, _ := l.Get(ctx, 1, false)
+	val, _ := l.Get(ctx, 1)
 	assert.Equal(t, Bytes([]byte{42}), val)
 
-	l.Set(ctx, 2, []byte{43}, false)
+	l.Set(ctx, 2, []byte{43})
 	_, ok = l.kv[1]
 	assert.False(t, ok)
 	_, ok = l.kv[2]
 	assert.True(t, ok)
-	val, _ = l.Get(ctx, 2, false)
+	val, _ = l.Get(ctx, 2)
 	assert.Equal(t, Bytes([]byte{43}), val)
 }
 
 func TestLRUCallbacks(t *testing.T) {
 	ctx := context.Background()
 
-	isNewEntryMap := make(map[int]bool)
 	postSetInvokedMap := make(map[int]bool)
 
 	evictEntryMap := make(map[int][]byte)
 	postEvictInvokedMap := make(map[int]bool)
 
 	l := New(1,
-		func(key int, value Bytes, isNewEntry bool) {
-			isNewEntryMap[key] = isNewEntry
+		func(key int, _ Bytes) {
 			postSetInvokedMap[key] = true
 		},
+		nil,
 		func(key int, value Bytes) {
 			evictEntryMap[key] = value
 			postEvictInvokedMap[key] = true
 		})
 
 	// PostSet
-	l.Set(ctx, 1, []byte{42}, false)
+	l.Set(ctx, 1, []byte{42})
 	assert.True(t, postSetInvokedMap[1])
 	postSetInvokedMap[1] = false // resetting
 	assert.False(t, postEvictInvokedMap[1])
-	assert.True(t, isNewEntryMap[1])
 
-	l.Set(ctx, 1, []byte{43}, false)
+	l.Set(ctx, 1, []byte{43})
 	assert.True(t, postSetInvokedMap[1])
-	assert.False(t, postEvictInvokedMap[1])
-	assert.False(t, isNewEntryMap[1])
+	assert.True(t, postEvictInvokedMap[1]) // set on the same key, so evicted
 
 	// PostSet and PostEvict
-	l.Set(ctx, 2, []byte{44}, false)
-	assert.True(t, isNewEntryMap[2])              // isNewEntryMap is updated by PostSet
+	l.Set(ctx, 2, []byte{44})
 	assert.True(t, postEvictInvokedMap[1])        //postEvictInvokedMap is updated by PostEvict
 	assert.Equal(t, []byte{43}, evictEntryMap[1]) //evictEntryMap is updated by PostEvict
 }
@@ -83,19 +79,19 @@ func TestLRUCallbacks(t *testing.T) {
 func BenchmarkLRUSet(b *testing.B) {
 	ctx := context.Background()
 	const capacity = 1024
-	l := New[int, Bytes](capacity, nil, nil)
+	l := New[int, Bytes](capacity, nil, nil, nil)
 	for i := 0; i < b.N; i++ {
-		l.Set(ctx, i%capacity, []byte{byte(i)}, false)
+		l.Set(ctx, i%capacity, []byte{byte(i)})
 	}
 }
 
 func BenchmarkLRUParallelSet(b *testing.B) {
 	ctx := context.Background()
 	const capacity = 1024
-	l := New[int, Bytes](capacity, nil, nil)
+	l := New[int, Bytes](capacity, nil, nil, nil)
 	b.RunParallel(func(pb *testing.PB) {
 		for i := 0; pb.Next(); i++ {
-			l.Set(ctx, i%capacity, []byte{byte(i)}, false)
+			l.Set(ctx, i%capacity, []byte{byte(i)})
 		}
 	})
 }
@@ -103,12 +99,12 @@ func BenchmarkLRUParallelSet(b *testing.B) {
 func BenchmarkLRUParallelSetOrGet(b *testing.B) {
 	ctx := context.Background()
 	const capacity = 1024
-	l := New[int, Bytes](capacity, nil, nil)
+	l := New[int, Bytes](capacity, nil, nil, nil)
 	b.RunParallel(func(pb *testing.PB) {
 		for i := 0; pb.Next(); i++ {
-			l.Set(ctx, i%capacity, []byte{byte(i)}, false)
+			l.Set(ctx, i%capacity, []byte{byte(i)})
 			if i%2 == 0 {
-				l.Get(ctx, i%capacity, false)
+				l.Get(ctx, i%capacity)
 			}
 		}
 	})

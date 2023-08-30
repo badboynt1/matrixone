@@ -90,6 +90,7 @@ func init() {
 		"connect":                    CONNECT,
 		"convert":                    CONVERT,
 		"config":                     CONFIG,
+		"connector":                  CONNECTOR,
 		"cipher":                     CIPHER,
 		"chain":                      CHAIN,
 		"client":                     CLIENT,
@@ -485,6 +486,7 @@ func init() {
 		"zonemap":                    ZONEMAP,
 		"adddate":                    ADDDATE,
 		"count":                      COUNT,
+		"approx_count":               APPROX_COUNT,
 		"approx_count_distinct":      APPROX_COUNT_DISTINCT,
 		"approx_percentile":          APPROX_PERCENTILE,
 		"curdate":                    CURDATE,
@@ -586,5 +588,9 @@ func init() {
 		"stage":                      STAGE,
 		"stages":                     STAGES,
 		"credentials":                CREDENTIALS,
+		"vecf32":                     VECF32,
+		"vecf64":                     VECF64,
+		"backup":                     BACKUP,
+		"filesystem":                 FILESYSTEM,
 	}
 }

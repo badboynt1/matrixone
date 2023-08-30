@@ -40,7 +40,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/pb/metadata"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
 	"github.com/matrixorigin/matrixone/pkg/pb/query"
-	"github.com/matrixorigin/matrixone/pkg/queryservice"
 	"github.com/matrixorigin/matrixone/pkg/sql/parsers"
 	"github.com/matrixorigin/matrixone/pkg/sql/parsers/dialect"
 	"github.com/matrixorigin/matrixone/pkg/sql/parsers/dialect/mysql"
@@ -181,8 +180,36 @@ func GetDefaultTenant() string {
 	return sysAccountName
 }
 
+func GetSysTenantId() uint32 {
+	return sysAccountID
+}
+
+func GetUserRoot() string {
+	return rootName
+}
+
+func GetUserRootId() uint32 {
+	return rootID
+}
+
 func GetDefaultRole() string {
 	return moAdminRoleName
+}
+
+func GetDefaultRoleId() uint32 {
+	return moAdminRoleID
+}
+
+func GetAccountAdminRole() string {
+	return accountAdminRoleName
+}
+
+func GetAccountAdminRoleId() uint32 {
+	return accountAdminRoleID
+}
+
+func GetAdminUserId() uint32 {
+	return dumpID + 1
 }
 
 func isCaseInsensitiveEqual(n string, role string) bool {
@@ -284,6 +311,38 @@ func getUserPart(user string) string {
 		return user[:pos]
 	}
 	return user
+}
+
+// getLabelPart gets the label part from the full string.
+// The full string could contain CN label information which
+// is used by proxy module.
+func getLabelPart(user string) string {
+	parts := strings.Split(user, "?")
+	if len(parts) > 1 {
+		return parts[1]
+	}
+	return ""
+}
+
+// ParseLabel parses the label string. The labels are seperated by
+// ",", key and value are seperated by "=".
+func ParseLabel(labelStr string) (map[string]string, error) {
+	labelMap := make(map[string]string)
+	if len(labelStr) == 0 {
+		return labelMap, nil
+	}
+	const delimiter1 = ","
+	const delimiter2 = "="
+	kvs := strings.Split(labelStr, delimiter1)
+	for _, label := range kvs {
+		parts := strings.Split(label, delimiter2)
+		if len(parts) == 2 && len(parts[0]) != 0 && len(parts[1]) != 0 {
+			labelMap[parts[0]] = parts[1]
+		} else {
+			return nil, moerr.NewInternalErrorNoCtx("invalid label format: should be like 'a=b'")
+		}
+	}
+	return labelMap, nil
 }
 
 // initUser for initialization or something special
@@ -1181,7 +1240,7 @@ const (
 
 	checkDatabaseFormat = `select dat_id from mo_catalog.mo_database where datname = "%s";`
 
-	checkDatabaseWithOwnerFormat = `select dat_id, owner from mo_catalog.mo_database where datname = "%s";`
+	checkDatabaseWithOwnerFormat = `select dat_id, owner from mo_catalog.mo_database where datname = "%s" and account_id = %d;`
 
 	checkDatabaseTableFormat = `select t.rel_id from mo_catalog.mo_database d, mo_catalog.mo_tables t
 										where d.dat_id = t.reldatabase_id
@@ -1828,12 +1887,12 @@ func getSqlForCheckDatabase(ctx context.Context, dbName string) (string, error) 
 	return fmt.Sprintf(checkDatabaseFormat, dbName), nil
 }
 
-func getSqlForCheckDatabaseWithOwner(ctx context.Context, dbName string) (string, error) {
+func getSqlForCheckDatabaseWithOwner(ctx context.Context, dbName string, accountId int64) (string, error) {
 	err := inputNameIsInvalid(ctx, dbName)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(checkDatabaseWithOwnerFormat, dbName), nil
+	return fmt.Sprintf(checkDatabaseWithOwnerFormat, dbName, accountId), nil
 }
 
 func getSqlForCheckDatabaseTable(ctx context.Context, dbName, tableName string) (string, error) {
@@ -2940,7 +2999,7 @@ func doAlterAccount(ctx context.Context, ses *Session, aa *tree.AlterAccount) (e
 			ses.getRoutineManager().accountRoutine.EnKillQueue(int64(targetAccountId), version)
 
 			if err := postDropSuspendAccount(ctx, ses, aa.Name, int64(targetAccountId), version); err != nil {
-				logutil.Errorf("post drop account error: %s", err.Error())
+				logutil.Errorf("post alter account suspend error: %s", err.Error())
 			}
 		}
 
@@ -2951,9 +3010,9 @@ func doAlterAccount(ctx context.Context, ses *Session, aa *tree.AlterAccount) (e
 					rt.setResricted(true)
 				}
 			}
-			err = alterSessionStatus(ctx, ses.GetTenantInfo().Tenant, aa.Name, ses.GetTenantInfo().GetUser(), tree.AccountStatusRestricted.String(), ses.GetParameterUnit().QueryService)
+			err = postAlterSessionStatus(ctx, ses, aa.Name, int64(targetAccountId), tree.AccountStatusRestricted.String())
 			if err != nil {
-				return err
+				logutil.Errorf("post alter account restricted error: %s", err.Error())
 			}
 		}
 
@@ -2964,9 +3023,9 @@ func doAlterAccount(ctx context.Context, ses *Session, aa *tree.AlterAccount) (e
 					rt.setResricted(false)
 				}
 			}
-			err = alterSessionStatus(ctx, ses.GetTenantInfo().Tenant, aa.Name, ses.GetTenantInfo().GetUser(), tree.AccountStatusOpen.String(), ses.GetParameterUnit().QueryService)
+			err = postAlterSessionStatus(ctx, ses, aa.Name, int64(targetAccountId), tree.AccountStatusOpen.String())
 			if err != nil {
-				return err
+				logutil.Errorf("post alter account not restricted error: %s", err.Error())
 			}
 		}
 	}
@@ -3457,7 +3516,7 @@ func doCreateStage(ctx context.Context, ses *Session, cs *tree.CreateStage) erro
 	return err
 }
 
-func doCheckFilePath(ctx context.Context, ses *Session, st *tree.Select) error {
+func doCheckFilePath(ctx context.Context, ses *Session, ep *tree.ExportParam) error {
 	var err error
 	var filePath string
 	var sql string
@@ -3465,7 +3524,7 @@ func doCheckFilePath(ctx context.Context, ses *Session, st *tree.Select) error {
 	var stageName string
 	var stageStatus string
 	var url string
-	if st.Ep == nil {
+	if ep == nil {
 		return err
 	}
 
@@ -3481,7 +3540,7 @@ func doCheckFilePath(ctx context.Context, ses *Session, st *tree.Select) error {
 	}
 
 	// detect filepath contain stage or not
-	filePath = st.Ep.FilePath
+	filePath = ep.FilePath
 	if !strings.Contains(filePath, ":") {
 		// the filepath is the target path
 		sql = getSqlForCheckStageStatus(ctx, "enabled")
@@ -3538,7 +3597,7 @@ func doCheckFilePath(ctx context.Context, ses *Session, st *tree.Select) error {
 				}
 
 				filePath = strings.Replace(filePath, stageName+":", url, 1)
-				st.Ep.FilePath = filePath
+				ses.ep.userConfig.StageFilePath = filePath
 			}
 
 		} else {
@@ -5510,6 +5569,20 @@ func determinePrivilegeSetOfStatement(stmt tree.Statement) *privilege {
 		if st.Name != nil {
 			dbName = string(st.Name.SchemaName)
 		}
+	case *tree.CreateStream:
+		objType = objectTypeDatabase
+		typs = append(typs, PrivilegeTypeCreateView, PrivilegeTypeDatabaseAll, PrivilegeTypeDatabaseOwnership)
+		writeDatabaseAndTableDirectly = true
+		if st.StreamName != nil {
+			dbName = string(st.StreamName.SchemaName)
+		}
+	case *tree.CreateConnector:
+		objType = objectTypeDatabase
+		typs = append(typs, PrivilegeTypeCreateView, PrivilegeTypeDatabaseAll, PrivilegeTypeDatabaseOwnership)
+		writeDatabaseAndTableDirectly = true
+		if st.ConnectorName != nil {
+			dbName = string(st.ConnectorName.SchemaName)
+		}
 	case *tree.CreateSequence:
 		objType = objectTypeDatabase
 		typs = append(typs, PrivilegeTypeDatabaseAll, PrivilegeTypeDatabaseOwnership)
@@ -5689,6 +5762,9 @@ func determinePrivilegeSetOfStatement(stmt tree.Statement) *privilege {
 		objType = objectTypeNone
 		kind = privilegeKindNone
 	case *tree.CreateStage, *tree.AlterStage, *tree.DropStage:
+		objType = objectTypeNone
+		kind = privilegeKindNone
+	case *tree.BackupStart:
 		objType = objectTypeNone
 		kind = privilegeKindNone
 	default:
@@ -7471,15 +7547,6 @@ func createTablesInMoCatalog(ctx context.Context, bh BackgroundExec, tenant *Ten
 	return err
 }
 
-// createTablesInInformationSchema creates the database information_schema and the views or tables.
-func createTablesInInformationSchema(ctx context.Context, bh BackgroundExec, tenant *TenantInfo, pu *config.ParameterUnit) error {
-	err := bh.Exec(ctx, "create database if not exists information_schema;")
-	if err != nil {
-		return err
-	}
-	return err
-}
-
 func checkTenantExistsOrNot(ctx context.Context, bh BackgroundExec, userName string) (bool, error) {
 	var sqlForCheckTenant string
 	var erArray []ExecResult
@@ -7735,7 +7802,7 @@ func createTablesInMoCatalogOfGeneralTenant(ctx context.Context, bh BackgroundEx
 		return nil, nil, moerr.NewInternalError(ctx, "get the id of tenant %s failed", ca.Name)
 	}
 
-	newUserId = dumpID + 1
+	newUserId = int64(GetAdminUserId())
 
 	newTenant = &TenantInfo{
 		Tenant:        ca.Name,
@@ -8450,7 +8517,7 @@ func doAlterDatabaseConfig(ctx context.Context, ses *Session, ad *tree.AlterData
 		}
 
 		// step1:check database exists or not and get database owner
-		sql, err = getSqlForCheckDatabaseWithOwner(ctx, dbName)
+		sql, err = getSqlForCheckDatabaseWithOwner(ctx, dbName, int64(ses.GetTenantInfo().GetTenantID()))
 		if err != nil {
 			return err
 		}
@@ -9018,14 +9085,25 @@ func addInitSystemVariablesSql(accountId int, accountName, variable_name string,
 	return initMoMysqlCompatibilityMode
 }
 
-// alterSessionStatus alter all nodes session status which the tenant has been alter restricted or open.
-func alterSessionStatus(ctx context.Context, curtenant, tenant string, user string, status string, qs queryservice.QueryService) error {
+// postAlterSessionStatus post alter all nodes session status which the tenant has been alter restricted or open.
+func postAlterSessionStatus(
+	ctx context.Context,
+	ses *Session,
+	accountName string,
+	tenantId int64,
+	status string) error {
+	qs := ses.GetParameterUnit().QueryService
+	if qs == nil {
+		return moerr.NewInternalError(ctx, "query service is not initialized")
+	}
+	currTenant := ses.GetTenantInfo().Tenant
+	currUser := ses.GetTenantInfo().User
 	var nodes []string
 	labels := clusterservice.NewSelector().SelectByLabel(
-		map[string]string{"account": tenant}, clusterservice.EQ)
-	sysTenant := isSysTenant(curtenant)
+		map[string]string{"account": accountName}, clusterservice.EQ)
+	sysTenant := isSysTenant(currTenant)
 	if sysTenant {
-		disttae.SelectForSuperTenant(clusterservice.NewSelector(), user, nil,
+		disttae.SelectForSuperTenant(clusterservice.NewSelector(), currUser, nil,
 			func(s *metadata.CNService) {
 				nodes = append(nodes, s.QueryAddress)
 			})
@@ -9056,9 +9134,8 @@ func alterSessionStatus(ctx context.Context, curtenant, tenant string, user stri
 		go func(addr string) {
 			req := qs.NewRequest(query.CmdMethod_AlterAccount)
 			req.AlterAccountRequest = &query.AlterAccountRequest{
-				Tenant:    tenant,
-				SysTenant: isSysTenant(tenant),
-				Status:    status,
+				TenantId: tenantId,
+				Status:   status,
 			}
 			resp, err := qs.SendMessage(ctx, addr, req)
 			responseChan <- nodeResponse{nodeAddr: addr, response: resp, err: err}
@@ -9075,7 +9152,9 @@ func alterSessionStatus(ctx context.Context, curtenant, tenant string, user stri
 				queryResp, ok := res.response.(*query.Response)
 
 				if !ok || (queryResp.AlterAccountResponse != nil && !queryResp.AlterAccountResponse.AlterSuccess) {
-					retErr = moerr.NewInternalError(ctx, "alter account failed")
+					retErr = moerr.NewInternalError(ctx,
+						fmt.Sprintf("alter account status for account %s failed on node %s",
+							accountName, res.nodeAddr))
 				}
 			}
 		case <-ctx.Done():

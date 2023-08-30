@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -224,40 +225,6 @@ func Test_checkSysExistsOrNot(t *testing.T) {
 		aicm := &defines.AutoIncrCacheManager{}
 
 		err = InitSysTenant(ctx, aicm)
-		convey.So(err, convey.ShouldBeNil)
-	})
-}
-
-func Test_createTablesInMoCatalog(t *testing.T) {
-	convey.Convey("createTablesInMoCatalog", t, func() {
-		ctrl := gomock.NewController(t)
-		defer ctrl.Finish()
-
-		pu := config.NewParameterUnit(&config.FrontendParameters{}, nil, nil, nil)
-		pu.SV.SetDefaultValues()
-
-		ctx := context.WithValue(context.TODO(), config.ParameterUnitKey, pu)
-
-		bh := mock_frontend.NewMockBackgroundExec(ctrl)
-		bh.EXPECT().Close().Return().AnyTimes()
-		bh.EXPECT().Exec(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-
-		bhStub := gostub.StubFunc(&NewBackgroundHandler, bh)
-		defer bhStub.Reset()
-
-		tenant := &TenantInfo{
-			Tenant:        sysAccountName,
-			User:          rootName,
-			DefaultRole:   moAdminRoleName,
-			TenantID:      sysAccountID,
-			UserID:        rootID,
-			DefaultRoleID: moAdminRoleID,
-		}
-
-		err := createTablesInMoCatalog(ctx, bh, tenant, pu)
-		convey.So(err, convey.ShouldBeNil)
-
-		err = createTablesInInformationSchema(ctx, bh, tenant, pu)
 		convey.So(err, convey.ShouldBeNil)
 	})
 }
@@ -8871,7 +8838,7 @@ func TestDoAlterDatabaseConfig(t *testing.T) {
 		bh.sql2result["commit;"] = nil
 		bh.sql2result["rollback;"] = nil
 
-		sql, _ := getSqlForCheckDatabaseWithOwner(ctx, ad.DbName)
+		sql, _ := getSqlForCheckDatabaseWithOwner(ctx, ad.DbName, int64(ses.GetTenantInfo().GetTenantID()))
 		mrs := newMrsForPasswordOfUser([][]interface{}{
 			{0, 0},
 		})
@@ -8927,7 +8894,7 @@ func TestDoAlterDatabaseConfig(t *testing.T) {
 		bh.sql2result["commit;"] = nil
 		bh.sql2result["rollback;"] = nil
 
-		sql, _ := getSqlForCheckDatabaseWithOwner(ctx, ad.DbName)
+		sql, _ := getSqlForCheckDatabaseWithOwner(ctx, ad.DbName, int64(ses.GetTenantInfo().GetTenantID()))
 		mrs := newMrsForPasswordOfUser([][]interface{}{
 			{0, 1},
 		})
@@ -10015,13 +9982,14 @@ func TestDoCheckFilePath(t *testing.T) {
 		ses.SetTenantInfo(tenant)
 
 		cs := &tree.Select{}
+		ses.InitExportConfig(cs.Ep)
 
 		//no result set
 		bh.sql2result["begin;"] = nil
 		bh.sql2result["commit;"] = nil
 		bh.sql2result["rollback;"] = nil
 
-		err := doCheckFilePath(ctx, ses, cs)
+		err := doCheckFilePath(ctx, ses, cs.Ep)
 		convey.So(err, convey.ShouldBeNil)
 	})
 
@@ -10060,6 +10028,7 @@ func TestDoCheckFilePath(t *testing.T) {
 				FilePath: "/mnt/disk1/t1.csv",
 			},
 		}
+		ses.InitExportConfig(cs.Ep)
 
 		//no result set
 		bh.sql2result["begin;"] = nil
@@ -10070,7 +10039,7 @@ func TestDoCheckFilePath(t *testing.T) {
 		mrs := newMrsForPasswordOfUser([][]interface{}{})
 		bh.sql2result[sql] = mrs
 
-		err := doCheckFilePath(ctx, ses, cs)
+		err := doCheckFilePath(ctx, ses, cs.Ep)
 		convey.So(err, convey.ShouldBeNil)
 	})
 
@@ -10109,6 +10078,7 @@ func TestDoCheckFilePath(t *testing.T) {
 				FilePath: "/mnt/disk1/t1.csv",
 			},
 		}
+		ses.InitExportConfig(cs.Ep)
 
 		//no result set
 		bh.sql2result["begin;"] = nil
@@ -10121,7 +10091,7 @@ func TestDoCheckFilePath(t *testing.T) {
 		})
 		bh.sql2result[sql] = mrs
 
-		err := doCheckFilePath(ctx, ses, cs)
+		err := doCheckFilePath(ctx, ses, cs.Ep)
 		convey.So(err, convey.ShouldNotBeNil)
 	})
 
@@ -10160,6 +10130,7 @@ func TestDoCheckFilePath(t *testing.T) {
 				FilePath: "stage1:/t1.csv",
 			},
 		}
+		ses.InitExportConfig(cs.Ep)
 
 		//no result set
 		bh.sql2result["begin;"] = nil
@@ -10170,7 +10141,7 @@ func TestDoCheckFilePath(t *testing.T) {
 		mrs := newMrsForPasswordOfUser([][]interface{}{})
 		bh.sql2result[sql] = mrs
 
-		err := doCheckFilePath(ctx, ses, cs)
+		err := doCheckFilePath(ctx, ses, cs.Ep)
 		convey.So(err, convey.ShouldNotBeNil)
 	})
 
@@ -10209,6 +10180,7 @@ func TestDoCheckFilePath(t *testing.T) {
 				FilePath: "stage1:/t1.csv",
 			},
 		}
+		ses.InitExportConfig(cs.Ep)
 
 		//no result set
 		bh.sql2result["begin;"] = nil
@@ -10221,7 +10193,7 @@ func TestDoCheckFilePath(t *testing.T) {
 		})
 		bh.sql2result[sql] = mrs
 
-		err := doCheckFilePath(ctx, ses, cs)
+		err := doCheckFilePath(ctx, ses, cs.Ep)
 		convey.So(err, convey.ShouldNotBeNil)
 	})
 
@@ -10260,6 +10232,7 @@ func TestDoCheckFilePath(t *testing.T) {
 				FilePath: "stage1:/t1.csv",
 			},
 		}
+		ses.InitExportConfig(cs.Ep)
 
 		//no result set
 		bh.sql2result["begin;"] = nil
@@ -10272,8 +10245,79 @@ func TestDoCheckFilePath(t *testing.T) {
 		})
 		bh.sql2result[sql] = mrs
 
-		err := doCheckFilePath(ctx, ses, cs)
+		err := doCheckFilePath(ctx, ses, cs.Ep)
 		convey.So(err, convey.ShouldBeNil)
-		convey.So(cs.Ep.FilePath, convey.ShouldEqual, "/tmp/t1.csv")
+		convey.So(cs.Ep.FilePath, convey.ShouldEqual, "stage1:/t1.csv")
 	})
+}
+
+func TestGetLabelPart(t *testing.T) {
+	user1 := "user1"
+	require.Equal(t, "", getLabelPart(user1))
+	user1 = "user1?"
+	require.Equal(t, "", getLabelPart(user1))
+	user1 = "user1?a:b"
+	require.Equal(t, "a:b", getLabelPart(user1))
+}
+
+func TestParseLabel(t *testing.T) {
+	cases := []struct {
+		str string
+		ret map[string]string
+		err bool
+	}{
+		{
+			str: "",
+			ret: map[string]string{},
+			err: false,
+		},
+		{
+			str: "a=1",
+			ret: map[string]string{"a": "1"},
+			err: false,
+		},
+		{
+			str: "a=1,",
+			err: true,
+		},
+		{
+			str: "a=1,b=2",
+			ret: map[string]string{"b": "2", "a": "1"},
+			err: false,
+		},
+		{
+			str: "a=1,b",
+			err: true,
+		},
+		{
+			str: "a=1,b=",
+			err: true,
+		},
+		{
+			str: "a=1,=2",
+			err: true,
+		},
+		{
+			str: "a=1,=",
+			err: true,
+		},
+		{
+			str: "a",
+			err: true,
+		},
+		{
+			str: "a=1,b:2",
+			err: true,
+		},
+	}
+
+	for _, item := range cases {
+		lb, err := ParseLabel(item.str)
+		if item.err {
+			require.Error(t, err)
+		} else {
+			require.True(t, reflect.DeepEqual(item.ret, lb))
+			require.NoError(t, err)
+		}
+	}
 }

@@ -17,11 +17,10 @@ package compile
 import (
 	"context"
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/sql/colexec/stream"
 	"hash/crc32"
 	"sync/atomic"
 	"time"
-
-	"github.com/matrixorigin/matrixone/pkg/sql/colexec/mergerecursive"
 
 	"github.com/google/uuid"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
@@ -65,6 +64,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/mergelimit"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/mergeoffset"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/mergeorder"
+	"github.com/matrixorigin/matrixone/pkg/sql/colexec/mergerecursive"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/mergetop"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/minus"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/multi_col/group_concat"
@@ -176,12 +176,12 @@ func cnMessageHandle(receiver *messageReceiverOnServer) error {
 		}
 		defer func() {
 			// record the number of s3 requests
-			c.proc.AnalInfos[c.anal.curr].S3IOInputCount += c.s3CounterSet.FileService.S3.Put.Load()
-			c.proc.AnalInfos[c.anal.curr].S3IOInputCount += c.s3CounterSet.FileService.S3.List.Load()
-			c.proc.AnalInfos[c.anal.curr].S3IOOutputCount += c.s3CounterSet.FileService.S3.Head.Load()
-			c.proc.AnalInfos[c.anal.curr].S3IOOutputCount += c.s3CounterSet.FileService.S3.Get.Load()
-			c.proc.AnalInfos[c.anal.curr].S3IOOutputCount += c.s3CounterSet.FileService.S3.Delete.Load()
-			c.proc.AnalInfos[c.anal.curr].S3IOOutputCount += c.s3CounterSet.FileService.S3.DeleteMulti.Load()
+			c.proc.AnalInfos[c.anal.curr].S3IOInputCount += c.counterSet.FileService.S3.Put.Load()
+			c.proc.AnalInfos[c.anal.curr].S3IOInputCount += c.counterSet.FileService.S3.List.Load()
+			c.proc.AnalInfos[c.anal.curr].S3IOOutputCount += c.counterSet.FileService.S3.Head.Load()
+			c.proc.AnalInfos[c.anal.curr].S3IOOutputCount += c.counterSet.FileService.S3.Get.Load()
+			c.proc.AnalInfos[c.anal.curr].S3IOOutputCount += c.counterSet.FileService.S3.Delete.Load()
+			c.proc.AnalInfos[c.anal.curr].S3IOOutputCount += c.counterSet.FileService.S3.DeleteMulti.Load()
 		}()
 		receiver.finalAnalysisInfo = c.proc.AnalInfos
 		return nil
@@ -658,6 +658,11 @@ func fillInstructionsForScope(s *Scope, ctx *scopeContext, p *pipeline.Pipeline,
 			return err
 		}
 	}
+	if s.isShuffle() {
+		for _, rr := range s.Proc.Reg.MergeReceivers {
+			rr.Ch = make(chan *batch.Batch, 16)
+		}
+	}
 	return nil
 }
 
@@ -736,7 +741,7 @@ func convertToPipelineInstruction(opr *vm.Instruction, ctx *scopeContext, ctxId 
 		in.Shuffle.ShuffleColMin = t.ShuffleColMin
 		in.Shuffle.AliveRegCnt = t.AliveRegCnt
 	case *dispatch.Argument:
-		in.Dispatch = &pipeline.Dispatch{IsSink: t.IsSink, RecSink: t.RecSink, FuncId: int32(t.FuncId)}
+		in.Dispatch = &pipeline.Dispatch{IsSink: t.IsSink, ShuffleType: t.ShuffleType, RecSink: t.RecSink, FuncId: int32(t.FuncId)}
 		in.Dispatch.ShuffleRegIdxLocal = make([]int32, len(t.ShuffleRegIdxLocal))
 		for i := range t.ShuffleRegIdxLocal {
 			in.Dispatch.ShuffleRegIdxLocal[i] = int32(t.ShuffleRegIdxLocal[i])
@@ -773,13 +778,15 @@ func convertToPipelineInstruction(opr *vm.Instruction, ctx *scopeContext, ctxId 
 		}
 	case *group.Argument:
 		in.Agg = &pipeline.Group{
-			NeedEval:  t.NeedEval,
-			Ibucket:   t.Ibucket,
-			Nbucket:   t.Nbucket,
-			Exprs:     t.Exprs,
-			Types:     convertToPlanTypes(t.Types),
-			Aggs:      convertToPipelineAggregates(t.Aggs),
-			MultiAggs: convertPipelineMultiAggs(t.MultiAggs),
+			IsShuffle:    t.IsShuffle,
+			PreAllocSize: t.PreAllocSize,
+			NeedEval:     t.NeedEval,
+			Ibucket:      t.Ibucket,
+			Nbucket:      t.Nbucket,
+			Exprs:        t.Exprs,
+			Types:        convertToPlanTypes(t.Types),
+			Aggs:         convertToPipelineAggregates(t.Aggs),
+			MultiAggs:    convertPipelineMultiAggs(t.MultiAggs),
 		}
 	case *join.Argument:
 		relList, colList := getRelColList(t.Result)
@@ -793,6 +800,7 @@ func convertToPipelineInstruction(opr *vm.Instruction, ctx *scopeContext, ctxId 
 			LeftCond:               t.Conditions[0],
 			RightCond:              t.Conditions[1],
 			RuntimeFilterBuildList: t.RuntimeFilterSpecs,
+			HashOnPk:               t.HashOnPK,
 		}
 	case *left.Argument:
 		relList, colList := getRelColList(t.Result)
@@ -996,12 +1004,14 @@ func convertToPipelineInstruction(opr *vm.Instruction, ctx *scopeContext, ctxId 
 		}
 	case *hashbuild.Argument:
 		in.HashBuild = &pipeline.HashBuild{
-			NeedExpr: t.NeedExpr,
-			NeedHash: t.NeedHashMap,
-			Ibucket:  t.Ibucket,
-			Nbucket:  t.Nbucket,
-			Types:    convertToPlanTypes(t.Typs),
-			Conds:    t.Conditions,
+			NeedExpr:        t.NeedExpr,
+			NeedHash:        t.NeedHashMap,
+			Ibucket:         t.Ibucket,
+			Nbucket:         t.Nbucket,
+			Types:           convertToPlanTypes(t.Typs),
+			Conds:           t.Conditions,
+			HashOnPk:        t.HashOnPK,
+			NeedMergedBatch: t.NeedMergedBatch,
 		}
 	case *external.Argument:
 		name2ColIndexSlice := make([]*pipeline.ExternalName2ColIndex, len(t.Es.Name2ColIndex))
@@ -1019,6 +1029,12 @@ func convertToPipelineInstruction(opr *vm.Instruction, ctx *scopeContext, ctxId 
 			CreateSql:       t.Es.CreateSql,
 			FileList:        t.Es.FileList,
 			Filter:          t.Es.Filter.FilterExpr,
+		}
+	case *stream.Argument:
+		in.StreamScan = &pipeline.StreamScan{
+			TblDef: t.TblDef,
+			Limit:  t.Limit,
+			Offset: t.Offset,
 		}
 	default:
 		return -1, nil, moerr.NewInternalErrorNoCtx(fmt.Sprintf("unexpected operator: %v", opr.Op))
@@ -1082,7 +1098,7 @@ func convertToVmInstruction(opr *pipeline.Instruction, ctx *scopeContext, eng en
 		}
 		for _, target := range t.Targets {
 			if target.LockTable {
-				lockArg.LockTable(target.TableId)
+				lockArg.LockTable(target.TableId, target.ChangeDef)
 			}
 		}
 		v.Arg = lockArg
@@ -1154,19 +1170,22 @@ func convertToVmInstruction(opr *pipeline.Instruction, ctx *scopeContext, eng en
 			FuncId:              int(t.FuncId),
 			LocalRegs:           regs,
 			RemoteRegs:          rrs,
+			ShuffleType:         t.ShuffleType,
 			ShuffleRegIdxLocal:  shuffleRegIdxLocal,
 			ShuffleRegIdxRemote: shuffleRegIdxRemote,
 		}
 	case vm.Group:
 		t := opr.GetAgg()
 		v.Arg = &group.Argument{
-			NeedEval:  t.NeedEval,
-			Ibucket:   t.Ibucket,
-			Nbucket:   t.Nbucket,
-			Exprs:     t.Exprs,
-			Types:     convertToTypes(t.Types),
-			Aggs:      convertToAggregates(t.Aggs),
-			MultiAggs: convertToMultiAggs(t.MultiAggs),
+			IsShuffle:    t.IsShuffle,
+			PreAllocSize: t.PreAllocSize,
+			NeedEval:     t.NeedEval,
+			Ibucket:      t.Ibucket,
+			Nbucket:      t.Nbucket,
+			Exprs:        t.Exprs,
+			Types:        convertToTypes(t.Types),
+			Aggs:         convertToAggregates(t.Aggs),
+			MultiAggs:    convertToMultiAggs(t.MultiAggs),
 		}
 	case vm.Join:
 		t := opr.GetJoin()
@@ -1178,6 +1197,7 @@ func convertToVmInstruction(opr *pipeline.Instruction, ctx *scopeContext, eng en
 			Result:             convertToResultPos(t.RelList, t.ColList),
 			Conditions:         [][]*plan.Expr{t.LeftCond, t.RightCond},
 			RuntimeFilterSpecs: t.RuntimeFilterBuildList,
+			HashOnPK:           t.HashOnPk,
 		}
 	case vm.Left:
 		t := opr.GetLeftJoin()
@@ -1380,12 +1400,14 @@ func convertToVmInstruction(opr *pipeline.Instruction, ctx *scopeContext, eng en
 	case vm.HashBuild:
 		t := opr.GetHashBuild()
 		v.Arg = &hashbuild.Argument{
-			Ibucket:     t.Ibucket,
-			Nbucket:     t.Nbucket,
-			NeedHashMap: t.NeedHash,
-			NeedExpr:    t.NeedExpr,
-			Typs:        convertToTypes(t.Types),
-			Conditions:  t.Conds,
+			Ibucket:         t.Ibucket,
+			Nbucket:         t.Nbucket,
+			NeedHashMap:     t.NeedHash,
+			NeedExpr:        t.NeedExpr,
+			Typs:            convertToTypes(t.Types),
+			Conditions:      t.Conds,
+			HashOnPK:        t.HashOnPk,
+			NeedMergedBatch: t.NeedMergedBatch,
 		}
 	case vm.External:
 		t := opr.GetExternalScan()
@@ -1411,6 +1433,13 @@ func convertToVmInstruction(opr *pipeline.Instruction, ctx *scopeContext, eng en
 					},
 				},
 			},
+		}
+	case vm.Stream:
+		t := opr.GetStreamScan()
+		v.Arg = &stream.Argument{
+			TblDef: t.TblDef,
+			Limit:  t.Limit,
+			Offset: t.Offset,
 		}
 	default:
 		return v, moerr.NewInternalErrorNoCtx(fmt.Sprintf("unexpected operator: %v", opr.Op))
@@ -1469,9 +1498,10 @@ func convertToPipelineAggregates(ags []agg.Aggregate) []*pipeline.Aggregate {
 	result := make([]*pipeline.Aggregate, len(ags))
 	for i, a := range ags {
 		result[i] = &pipeline.Aggregate{
-			Op:   int32(a.Op),
-			Dist: a.Dist,
-			Expr: a.E,
+			Op:     int32(a.Op),
+			Dist:   a.Dist,
+			Expr:   a.E,
+			Config: a.Config,
 		}
 	}
 	return result
@@ -1482,9 +1512,10 @@ func convertToAggregates(ags []*pipeline.Aggregate) []agg.Aggregate {
 	result := make([]agg.Aggregate, len(ags))
 	for i, a := range ags {
 		result[i] = agg.Aggregate{
-			Op:   int(a.Op),
-			Dist: a.Dist,
-			E:    a.Expr,
+			Op:     int(a.Op),
+			Dist:   a.Dist,
+			E:      a.Expr,
+			Config: a.Config,
 		}
 	}
 	return result
@@ -1607,6 +1638,10 @@ func decodeBatch(mp *mpool.MPool, vp engine.VectorPool, data []byte) (*batch.Bat
 	if err != nil {
 		return nil, err
 	}
+	if bat.IsEmpty() {
+		return batch.EmptyBatch, nil
+	}
+
 	// allocated memory of vec from mPool.
 	for i, vec := range bat.Vecs {
 		typ := *vec.GetType()
@@ -1620,7 +1655,7 @@ func decodeBatch(mp *mpool.MPool, vp engine.VectorPool, data []byte) (*batch.Bat
 		}
 		bat.Vecs[i] = rvec
 	}
-	bat.Cnt = 1
+	bat.SetCnt(1)
 	// allocated memory of aggVec from mPool.
 	for i, ag := range bat.Aggs {
 		err = ag.WildAggReAlloc(mp)
