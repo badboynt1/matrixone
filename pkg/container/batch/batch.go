@@ -122,6 +122,15 @@ func (bat *Batch) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
+func (bat *Batch) ShrinkByBoolVector(bs []bool) {
+	for _, vec := range bat.Vecs {
+		vec.ShrinkByBoolVector(bs, false)
+	}
+	if len(bat.Vecs) > 0 {
+		bat.rowCount = bat.Vecs[0].Length()
+	}
+}
+
 func (bat *Batch) Shrink(sels []int64) {
 	for _, vec := range bat.Vecs {
 		vec.Shrink(sels, false)

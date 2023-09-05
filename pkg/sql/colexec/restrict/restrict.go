@@ -100,6 +100,11 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (s
 			sels = sels[:0]
 
 			l := uint64(vec.Length())
+
+			bat, err = tryDupBatch(proc, bat)
+			if err != nil {
+				return process.ExecNext, err
+			}
 			if bs.WithAnyNullValue() {
 				for j := uint64(0); j < l; j++ {
 					v, null := bs.GetValue(j)
@@ -107,19 +112,12 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (s
 						sels = append(sels, int64(j))
 					}
 				}
+				bat.Shrink(sels)
 			} else {
-				for j := uint64(0); j < l; j++ {
-					v, _ := bs.GetValue(j)
-					if v {
-						sels = append(sels, int64(j))
-					}
-				}
+				boolSlice := vector.MustFixedCol[bool](bs.GetSourceVector())
+				bat.ShrinkByBoolVector(boolSlice)
 			}
-			bat, err = tryDupBatch(proc, bat)
-			if err != nil {
-				return process.ExecNext, err
-			}
-			bat.Shrink(sels)
+
 		}
 	}
 

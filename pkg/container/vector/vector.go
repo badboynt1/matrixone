@@ -625,6 +625,79 @@ func (v *Vector) Dup(mp *mpool.MPool) (*Vector, error) {
 	return w, nil
 }
 
+// Shrink use to shrink vectors, if there is any null value, can not call this function
+func (v *Vector) ShrinkByBoolVector(bs []bool, negate bool) {
+	if v.IsConst() {
+		length := 0
+		for _, b := range bs {
+			if b {
+				length++
+			}
+		}
+		if negate {
+			v.length -= length
+		} else {
+			v.length = length
+		}
+		return
+	}
+
+	switch v.typ.Oid {
+	case types.T_bool:
+		shrinkFixedByBoolVector[bool](v, bs, negate)
+	case types.T_int8:
+		shrinkFixedByBoolVector[int8](v, bs, negate)
+	case types.T_int16:
+		shrinkFixedByBoolVector[int16](v, bs, negate)
+	case types.T_int32:
+		shrinkFixedByBoolVector[int32](v, bs, negate)
+	case types.T_int64:
+		shrinkFixedByBoolVector[int64](v, bs, negate)
+	case types.T_uint8:
+		shrinkFixedByBoolVector[uint8](v, bs, negate)
+	case types.T_uint16:
+		shrinkFixedByBoolVector[uint16](v, bs, negate)
+	case types.T_uint32:
+		shrinkFixedByBoolVector[uint32](v, bs, negate)
+	case types.T_uint64:
+		shrinkFixedByBoolVector[uint64](v, bs, negate)
+	case types.T_float32:
+		shrinkFixedByBoolVector[float32](v, bs, negate)
+	case types.T_float64:
+		shrinkFixedByBoolVector[float64](v, bs, negate)
+	case types.T_char, types.T_varchar, types.T_binary, types.T_varbinary, types.T_json, types.T_blob, types.T_text,
+		types.T_array_float32, types.T_array_float64:
+		// XXX shrink varlena, but did not shrink area.  For our vector, this
+		// may well be the right thing.  If want to shrink area as well, we
+		// have to copy each varlena value and swizzle pointer.
+		shrinkFixedByBoolVector[types.Varlena](v, bs, negate)
+	case types.T_date:
+		shrinkFixedByBoolVector[types.Date](v, bs, negate)
+	case types.T_datetime:
+		shrinkFixedByBoolVector[types.Datetime](v, bs, negate)
+	case types.T_time:
+		shrinkFixedByBoolVector[types.Time](v, bs, negate)
+	case types.T_timestamp:
+		shrinkFixedByBoolVector[types.Timestamp](v, bs, negate)
+	case types.T_enum:
+		shrinkFixedByBoolVector[types.Enum](v, bs, negate)
+	case types.T_decimal64:
+		shrinkFixedByBoolVector[types.Decimal64](v, bs, negate)
+	case types.T_decimal128:
+		shrinkFixedByBoolVector[types.Decimal128](v, bs, negate)
+	case types.T_uuid:
+		shrinkFixedByBoolVector[types.Uuid](v, bs, negate)
+	case types.T_TS:
+		shrinkFixedByBoolVector[types.TS](v, bs, negate)
+	case types.T_Rowid:
+		shrinkFixedByBoolVector[types.Rowid](v, bs, negate)
+	case types.T_Blockid:
+		shrinkFixedByBoolVector[types.Blockid](v, bs, negate)
+	default:
+		panic(fmt.Sprintf("unexpect type %s for function vector.Shrink", v.typ))
+	}
+}
+
 // Shrink use to shrink vectors, sels must be guaranteed to be ordered
 func (v *Vector) Shrink(sels []int64, negate bool) {
 	if v.IsConst() {
@@ -2890,6 +2963,27 @@ func appendArrayList[T types.RealNumbers](vec *Vector, vals [][]T, isNulls []boo
 		}
 	}
 	return nil
+}
+
+func shrinkFixedByBoolVector[T types.FixedSizeT](v *Vector, bs []bool, negate bool) {
+	vs := MustFixedCol[T](v)
+	currentIndex := 0
+	if negate {
+		for i, b := range bs {
+			if !b {
+				vs[currentIndex] = vs[i]
+				currentIndex++
+			}
+		}
+	} else {
+		for i, b := range bs {
+			if b {
+				vs[currentIndex] = vs[i]
+				currentIndex++
+			}
+		}
+	}
+	v.length = currentIndex
 }
 
 func shrinkFixed[T types.FixedSizeT](v *Vector, sels []int64, negate bool) {
