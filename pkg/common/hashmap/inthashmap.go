@@ -194,7 +194,7 @@ func fillVarlenaKey(m *IntHashMap, vec *vector.Vector, start int, n int) {
 		if m.hasNull {
 			for i := 0; i < n; i++ {
 				*(*int8)(unsafe.Add(unsafe.Pointer(&keys[i]), keyOffs[i])) = 0
-				v := vcol[i+start]
+				v := &(vcol[i+start])
 				svlen := int(v[0])
 				dst := unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]+1:]
 				for j := 0; j < svlen; j++ {
@@ -204,7 +204,7 @@ func fillVarlenaKey(m *IntHashMap, vec *vector.Vector, start int, n int) {
 			}
 		} else {
 			for i := 0; i < n; i++ {
-				v := vcol[i+start]
+				v := &(vcol[i+start])
 				svlen := int(v[0])
 				dst := unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]:]
 				for j := 0; j < svlen; j++ {
@@ -222,7 +222,7 @@ func fillVarlenaKey(m *IntHashMap, vec *vector.Vector, start int, n int) {
 					keyOffs[i]++
 				} else {
 					*(*int8)(unsafe.Add(unsafe.Pointer(&keys[i]), keyOffs[i])) = 0
-					v := vcol[i+start]
+					v := &(vcol[i+start])
 					svlen := int(v[0])
 					dst := unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]+1:]
 					for j := 0; j < svlen; j++ {
@@ -237,7 +237,7 @@ func fillVarlenaKey(m *IntHashMap, vec *vector.Vector, start int, n int) {
 					m.zValues[i] = 0
 					continue
 				}
-				v := vcol[i+start]
+				v := &(vcol[i+start])
 				svlen := int(v[0])
 				dst := unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]:]
 				for j := 0; j < svlen; j++ {
