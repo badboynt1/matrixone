@@ -193,16 +193,24 @@ func fillVarlenaKey(m *IntHashMap, vec *vector.Vector, start int, n int) {
 	if !vec.GetNulls().Any() {
 		if m.hasNull {
 			for i := 0; i < n; i++ {
-				v := vcol[i+start].ByteSlice()
 				*(*int8)(unsafe.Add(unsafe.Pointer(&keys[i]), keyOffs[i])) = 0
-				copy(unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]+1:], v)
-				m.keyOffs[i] += uint32(len(v) + 1)
+				v := vcol[i+start]
+				svlen := int(v[0])
+				dst := unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]+1:]
+				for j := 0; j < svlen; j++ {
+					dst[j] = v[j+1]
+				}
+				m.keyOffs[i] += uint32(svlen + 1)
 			}
 		} else {
 			for i := 0; i < n; i++ {
-				v := vcol[i+start].ByteSlice()
-				copy(unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]:], v)
-				m.keyOffs[i] += uint32(len(v))
+				v := vcol[i+start]
+				svlen := int(v[0])
+				dst := unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]:]
+				for j := 0; j < svlen; j++ {
+					dst[j] = v[j+1]
+				}
+				m.keyOffs[i] += uint32(svlen)
 			}
 		}
 	} else {
@@ -213,10 +221,14 @@ func fillVarlenaKey(m *IntHashMap, vec *vector.Vector, start int, n int) {
 					*(*int8)(unsafe.Add(unsafe.Pointer(&keys[i]), keyOffs[i])) = 1
 					keyOffs[i]++
 				} else {
-					v := vcol[i+start].ByteSlice()
 					*(*int8)(unsafe.Add(unsafe.Pointer(&keys[i]), keyOffs[i])) = 0
-					copy(unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]+1:], v)
-					m.keyOffs[i] += uint32(len(v) + 1)
+					v := vcol[i+start]
+					svlen := int(v[0])
+					dst := unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]+1:]
+					for j := 0; j < svlen; j++ {
+						dst[j] = v[j+1]
+					}
+					m.keyOffs[i] += uint32(svlen + 1)
 				}
 			}
 		} else {
@@ -225,9 +237,13 @@ func fillVarlenaKey(m *IntHashMap, vec *vector.Vector, start int, n int) {
 					m.zValues[i] = 0
 					continue
 				}
-				v := vcol[i+start].ByteSlice()
-				copy(unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]:], v)
-				m.keyOffs[i] += uint32(len(v))
+				v := vcol[i+start]
+				svlen := int(v[0])
+				dst := unsafe.Slice((*byte)(unsafe.Pointer(&keys[i])), 8)[m.keyOffs[i]:]
+				for j := 0; j < svlen; j++ {
+					dst[j] = v[j+1]
+				}
+				m.keyOffs[i] += uint32(svlen)
 			}
 		}
 	}
