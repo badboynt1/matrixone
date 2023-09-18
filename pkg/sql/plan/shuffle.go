@@ -232,6 +232,10 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 		n.Stats.HashmapStats.ShuffleColIdx = int32(idx)
 		n.Stats.HashmapStats.Shuffle = true
 	}
+
+	if n.Stats.HashmapStats.ShuffleTypeForMultiCN == plan.ShuffleTypeForMultiCN_Complex {
+		n.Stats.HashmapStats.Shuffle = false
+	}
 }
 
 // find agg or agg->filter node
