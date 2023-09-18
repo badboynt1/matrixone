@@ -234,7 +234,9 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 	}
 
 	if n.Stats.HashmapStats.ShuffleTypeForMultiCN == plan.ShuffleTypeForMultiCN_Complex {
-		n.Stats.HashmapStats.Shuffle = false
+		if n.Stats.HashmapStats.HashmapSize < HashMapSizeForShuffle*16 {
+			n.Stats.HashmapStats.Shuffle = false
+		}
 	}
 }
 
