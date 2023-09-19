@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/matrixorigin/matrixone/pkg/common/runtime"
 	"io"
 	gotrace "runtime/trace"
 	"sort"
@@ -30,6 +29,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/matrixorigin/matrixone/pkg/common/runtime"
 
 	"github.com/matrixorigin/matrixone/pkg/config"
 	"github.com/matrixorigin/matrixone/pkg/fileservice"
@@ -222,7 +223,13 @@ var RecordStatement = func(ctx context.Context, ses *Session, proc *process.Proc
 		stmID = uuid.New()
 		text = SubStringFromBegin(envStmt, int(ses.GetParameterUnit().SV.LengthOfQueryPrinted))
 	}
-	ses.sqlType.Store(sqlType)
+	ses.SetStmtId(stmID)
+	ses.SetStmtType(getStatementType(statement).GetStatementType())
+	ses.SetQueryType(getStatementType(statement).GetQueryType())
+	ses.SetSqlSourceType(sqlType)
+	ses.SetSqlOfStmt(text)
+
+	//note: txn id here may be empty
 	if sqlType != constant.InternalSql {
 		ses.pushQueryId(types.Uuid(stmID).ToString())
 	}
@@ -336,7 +343,7 @@ var RecordStatementTxnID = func(ctx context.Context, ses *Session) {
 			} else {
 				stm.SetTxnID(txn.Txn().ID)
 			}
-
+			ses.SetTxnId(txn.Txn().ID)
 		}
 		stm.Report(ctx)
 	}
@@ -2554,6 +2561,8 @@ func (mce *MysqlCmdExecutor) executeStmt(requestCtx context.Context,
 	var loadLocalErrGroup *errgroup.Group
 	var loadLocalWriter *io.PipeWriter
 
+	ses.SetQueryStart(time.Now())
+
 	// per statement profiler
 	requestCtx, endStmtProfile := fileservice.NewStatementProfiler(requestCtx)
 	if endStmtProfile != nil {
@@ -3494,6 +3503,7 @@ func (mce *MysqlCmdExecutor) doComQuery(requestCtx context.Context, input *UserI
 		StorageEngine: pu.StorageEngine,
 		LastInsertID:  ses.GetLastInsertID(),
 		SqlHelper:     ses.GetSqlHelper(),
+		Buf:           ses.GetBuffer(),
 	}
 	proc.SetResolveVariableFunc(mce.ses.txnCompileCtx.ResolveVariable)
 	proc.InitSeq()
