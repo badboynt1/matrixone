@@ -976,6 +976,7 @@ message DataDefinition {
 		ALTER_SEQUENCE		= 30;
 		DROP_SEQUENCE		= 31;
 		SHOW_SEQUENCES      = 32;
+		SHOW_CONNECTORS = 33;
 
 	}
 	//DataDefinition type
@@ -1178,6 +1179,9 @@ message DropSequence {
 }
 
 message AlterSequence {
+	bool if_exists		=1;
+	string database 		=2;
+	TableDef table_def 		=3;
 }
 
 message CreateIndex {
