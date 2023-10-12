@@ -78,6 +78,7 @@ const (
 	ErrWrongValueCountOnRow uint16 = 20308
 	ErrBadFieldError        uint16 = 20309
 	ErrWrongDatetimeSpec    uint16 = 20310
+	ErrUpgrateError         uint16 = 20311
 
 	// Group 4: unexpected state and io errors
 	ErrInvalidState                             uint16 = 20400
@@ -235,6 +236,10 @@ const (
 	ErrPartitionMaxvalue                   uint16 = 20817
 	ErrRangeNotIncreasing                  uint16 = 20818
 	ErrCheckRecursiveLevel                 uint16 = 20819
+	ErrSameNamePartitionField              uint16 = 20820
+	ErrMaxvalueInValuesIn                  uint16 = 20821
+	ErrRowSinglePartitionField             uint16 = 20822
+	ErrTooManyPartitionFuncFields          uint16 = 20823
 
 	// Group 9: streaming
 	ErrUnsupportedOption   uint16 = 20901
@@ -293,6 +298,7 @@ var errorMsgRefer = map[uint16]moErrorMsgItem{
 	ErrWrongValueCountOnRow: {ER_WRONG_VALUE_COUNT_ON_ROW, []string{MySQLDefaultSqlState}, "Column count doesn't match value count at row %d"},
 	ErrBadFieldError:        {ER_BAD_FIELD_ERROR, []string{MySQLDefaultSqlState}, "Unknown column '%s' in '%s'"},
 	ErrWrongDatetimeSpec:    {ER_WRONG_DATETIME_SPEC, []string{MySQLDefaultSqlState}, "wrong date/time format specifier: %s"},
+	ErrUpgrateError:         {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "CN upgrade table or view '%s.%s' under tenant '%s:%d' reports error: %s"},
 
 	// Group 4: unexpected state or file io error
 	ErrInvalidState:                             {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "invalid state %s"},
@@ -433,6 +439,10 @@ var errorMsgRefer = map[uint16]moErrorMsgItem{
 	ErrPartitionMaxvalue:                   {ER_PARTITION_MAXVALUE_ERROR, []string{MySQLDefaultSqlState}, "MAXVALUE can only be used in last partition definition"},
 	ErrRangeNotIncreasing:                  {ER_RANGE_NOT_INCREASING_ERROR, []string{MySQLDefaultSqlState}, "VALUES LESS THAN value must be strictly increasing for each partition"},
 	ErrCheckRecursiveLevel:                 {ErrCheckRecursiveLevel, []string{MySQLDefaultSqlState}, "recursive level out of range"},
+	ErrSameNamePartitionField:              {ER_SAME_NAME_PARTITION_FIELD, []string{MySQLDefaultSqlState}, "Duplicate partition field name '%-.192s'"},
+	ErrMaxvalueInValuesIn:                  {ER_MAXVALUE_IN_VALUES_IN, []string{MySQLDefaultSqlState}, "Cannot use MAXVALUE as value in VALUES IN"},
+	ErrRowSinglePartitionField:             {ER_ROW_SINGLE_PARTITION_FIELD_ERROR, []string{MySQLDefaultSqlState}, "Row expressions in VALUES IN only allowed for multi-field column partitioning"},
+	ErrTooManyPartitionFuncFields:          {ER_TOO_MANY_PARTITION_FUNC_FIELDS_ERROR, []string{MySQLDefaultSqlState}, "Too many fields in '%-.192s'"},
 
 	// Group 9: streaming
 	ErrUnsupportedOption:   {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "unsupported option %s"},
@@ -642,6 +652,10 @@ func NewBadS3Config(ctx context.Context, msg string) *Error {
 func NewInternalError(ctx context.Context, msg string, args ...any) *Error {
 	xmsg := fmt.Sprintf(msg, args...)
 	return newError(ctx, ErrInternal, xmsg)
+}
+
+func NewUpgrateError(ctx context.Context, dbName string, table string, tenant string, tenantId uint32, errmsg string) *Error {
+	return newError(ctx, ErrUpgrateError, dbName, table, tenant, tenantId, errmsg)
 }
 
 func NewNYI(ctx context.Context, msg string, args ...any) *Error {
@@ -1102,12 +1116,28 @@ func NewValuesIsNotIntType(ctx context.Context, k any) *Error {
 	return newError(ctx, ErrValuesIsNotIntType, k)
 }
 
-func NewPartitionColumnList(ctx context.Context) *Error {
+func NewErrPartitionColumnList(ctx context.Context) *Error {
 	return newError(ctx, ErrPartitionColumnList)
 }
 
 func NewSameNamePartition(ctx context.Context, k any) *Error {
-	return newError(ctx, ErrSameNamePartition)
+	return newError(ctx, ErrSameNamePartition, k)
+}
+
+func NewSameNamePartitionField(ctx context.Context, k any) *Error {
+	return newError(ctx, ErrSameNamePartitionField, k)
+}
+
+func NewErrMaxvalueInValuesIn(ctx context.Context) *Error {
+	return newError(ctx, ErrMaxvalueInValuesIn)
+}
+
+func NewErrRowSinglePartitionField(ctx context.Context) *Error {
+	return newError(ctx, ErrRowSinglePartitionField)
+}
+
+func NewErrTooManyPartitionFuncFields(ctx context.Context, k any) *Error {
+	return newError(ctx, ErrTooManyPartitionFuncFields, k)
 }
 
 func NewErrTooManyPartitions(ctx context.Context) *Error {

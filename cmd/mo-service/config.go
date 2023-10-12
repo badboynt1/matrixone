@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"hash/fnv"
 	"math"
 	"net"
@@ -26,8 +25,12 @@ import (
 	"strings"
 	"time"
 
+	logservicepb "github.com/matrixorigin/matrixone/pkg/pb/logservice"
+	"github.com/matrixorigin/matrixone/pkg/util"
+
 	"github.com/BurntSushi/toml"
 	"github.com/matrixorigin/matrixone/pkg/cnservice"
+	"github.com/matrixorigin/matrixone/pkg/common/chaos"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/config"
 	"github.com/matrixorigin/matrixone/pkg/defines"
@@ -42,6 +45,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/util/metric/stats"
 	tomlutil "github.com/matrixorigin/matrixone/pkg/util/toml"
 	"github.com/matrixorigin/matrixone/pkg/version"
+	"go.uber.org/zap"
 )
 
 var (
@@ -66,6 +70,24 @@ type LaunchConfig struct {
 	CNServiceConfigsFiles []string `toml:"cnservices"`
 	// CNServiceConfigsFiles log service config files
 	ProxyServiceConfigsFiles []string `toml:"proxy-services"`
+	// Dynamic dynamic cn service config
+	Dynamic Dynamic `toml:"dynamic"`
+}
+
+// Dynamic dynamic cn config
+type Dynamic struct {
+	// Enable enable dynamic cn config
+	Enable bool `toml:"enable"`
+	// CtlAddress http server port for ctl dynamic cn
+	CtlAddress string `toml:"ctl-address"`
+	// CNTemplate cn template file
+	CNTemplate string `toml:"cn-template"`
+	// ServiceCount how many cn services to start
+	ServiceCount int `toml:"service-count"`
+	// CpuCount how many cpu can used pr cn instance
+	CpuCount int `toml:"cpu-count"`
+	// Chaos chaos test config
+	Chaos chaos.Config `toml:"chaos"`
 }
 
 // Config mo-service configuration
@@ -152,6 +174,46 @@ func (c *Config) validate() error {
 	}
 	if _, err := c.getServiceType(); err != nil {
 		return err
+	}
+	if c.Clock.MaxClockOffset.Duration == 0 {
+		c.Clock.MaxClockOffset.Duration = defaultMaxClockOffset
+	}
+	if c.Clock.Backend == "" {
+		c.Clock.Backend = localClockBackend
+	}
+	if _, ok := supportTxnClockBackends[strings.ToUpper(c.Clock.Backend)]; !ok {
+		return moerr.NewInternalError(context.Background(), "%s clock backend not support", c.Clock.Backend)
+	}
+	if !c.Clock.EnableCheckMaxClockOffset {
+		c.Clock.MaxClockOffset.Duration = 0
+	}
+	for i, config := range c.FileServices {
+		// rename 's3' to 'shared'
+		if strings.EqualFold(config.Name, "s3") {
+			c.FileServices[i].Name = defines.SharedFileServiceName
+		}
+		// set default data dir
+		if config.DataDir == "" {
+			c.FileServices[i].DataDir = c.defaultFileServiceDataDir(config.Name)
+		}
+		// set default disk cache dir
+		if config.Cache.DiskPath == nil {
+			path := filepath.Join(c.DataDir, strings.ToLower(config.Name)+"-cache")
+			c.FileServices[i].Cache.DiskPath = &path
+		}
+	}
+	if c.Limit.Memory == 0 {
+		c.Limit.Memory = tomlutil.ByteSize(defaultMemoryLimit)
+	}
+	if c.Log.StacktraceLevel == "" {
+		c.Log.StacktraceLevel = zap.PanicLevel.String()
+	}
+	return nil
+}
+
+func (c *Config) setDefaultValue() error {
+	if c.DataDir == "" {
+		c.DataDir = "./mo-data"
 	}
 	if c.Clock.MaxClockOffset.Duration == 0 {
 		c.Clock.MaxClockOffset.Duration = defaultMaxClockOffset
@@ -474,4 +536,49 @@ func (c *Config) mustGetServiceUUID() string {
 
 func (c *Config) setCacheCallbacks(fsConfig *fileservice.Config) {
 	fsConfig.Cache.SetRemoteCacheCallback()
+}
+
+// dumpCommonConfig gets the common config items except cn,tn,log,proxy
+func dumpCommonConfig(cfg Config) (map[string]*logservicepb.ConfigItem, error) {
+	defCfg := *NewConfig()
+	err := defCfg.setDefaultValue()
+	if err != nil {
+		return nil, err
+	}
+	ret, err := util.DumpConfig(cfg, defCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	//specific config items should be remoted
+	filters := []string{
+		"Config.TN_please_use_getTNServiceConfig",
+		"Config.TNCompatible",
+		"Config.LogService",
+		"Config.CN",
+		"Config.ProxyConfig",
+	}
+
+	//denote the common for cn,tn,log or proxy
+	prefix := "Common"
+
+	newMap := make(map[string]*logservicepb.ConfigItem)
+	for s, item := range ret {
+		needDrop := false
+		for _, filter := range filters {
+			if strings.HasPrefix(strings.ToLower(s), strings.ToLower(filter)) {
+				needDrop = true
+				break
+			}
+		}
+		if needDrop {
+			continue
+		}
+
+		s = prefix + s
+		item.Name = s
+		newMap[s] = item
+	}
+
+	return newMap, err
 }

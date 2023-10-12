@@ -325,6 +325,7 @@ func LockRows(
 	tableID uint64,
 	vec *vector.Vector,
 	pkType types.Type,
+	lockMode lock.LockMode,
 ) error {
 	if !proc.TxnOperator.Txn().IsPessimistic() {
 		return nil
@@ -335,6 +336,7 @@ func LockRows(
 
 	opts := DefaultLockOptions(parker).
 		WithLockTable(false, false).
+		WithLockMode(lockMode).
 		WithFetchLockRowsFunc(GetFetchRowsFunc(pkType))
 	_, defChanged, refreshTS, err := doLock(
 		proc.Ctx,
@@ -413,10 +415,13 @@ func doLock(
 		}
 	} else {
 		// FIXME: in launch model, multi-cn will use same process level runtime. So lockservice will be wrong.
-		if txn.LockService != lockService.GetConfig().ServiceID {
+		if txn.LockService != lockService.GetServiceID() {
 			lockService = lockservice.GetLockServiceByServiceID(txn.LockService)
 		}
 	}
+
+	key := txnOp.AddWaitLock(tableID, rows, options)
+	defer txnOp.RemoveWaitLock(key)
 
 	result, err := lockService.Lock(
 		ctx,

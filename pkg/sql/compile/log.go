@@ -12,15 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package fileservice
+package compile
 
-type S3Config struct {
-	SharedConfigProfile string `toml:"shared-config-profile"`
-	Endpoint            string `toml:"endpoint"`
-	Bucket              string `toml:"bucket"`
-	// KeyPrefix enables multiple fs instances in one bucket
-	KeyPrefix string `toml:"key-prefix"`
+import (
+	"sync"
+
+	"github.com/matrixorigin/matrixone/pkg/common/log"
+	"github.com/matrixorigin/matrixone/pkg/common/runtime"
+)
+
+var (
+	logger *log.MOLogger
+	once   sync.Once
+)
+
+func getLogger() *log.MOLogger {
+	once.Do(initLogger)
+	return logger
 }
 
-// key mapping scheme:
-// <KeyPrefix>/<file path> -> file content
+func initLogger() {
+	rt := runtime.ProcessLevelRuntime()
+	if rt == nil {
+		rt = runtime.DefaultRuntime()
+	}
+	logger = rt.Logger().Named("pipeline")
+}

@@ -53,6 +53,7 @@ jobs:
       mo_svc_ip: ${{ steps.get_mo_addr.outputs.mo_svc_ip }}
       cn_0: ${{ steps.get_mo_addr.outputs.cn_0 }}
       cn_1: ${{ steps.get_mo_addr.outputs.cn_1 }}
+      cn_ips: ${{ steps.get_mo_addr.outputs.cn_ips }}
     steps:
       - name: Checkout Matrixorigin/Matrixone
         uses: actions/checkout@v3
@@ -114,7 +115,9 @@ jobs:
           mo_svc_ip=$(kubectl -n mo-checkin-regression-${{ github.event.pull_request.number }} get svc | grep "6001/TCP"|awk '{print $3}')
           echo mo_svc_ip=$mo_svc_ip
           echo "mo_svc_ip=${mo_svc_ip}" >> $GITHUB_OUTPUT
-          kubectl get pod -n mo-checkin-regression-${{ github.event.pull_request.number }} -l matrixorigin.io/component=CNSet | awk 'NR>1{arr[a++]=$1} END {for(i in arr){system("echo cn_"i"="arr[i]" >> $GITHUB_OUTPUT")}}'    
+          kubectl get pod -n mo-checkin-regression-${{ github.event.pull_request.number }} -l matrixorigin.io/component=CNSet | awk 'NR>1{arr[a++]=$1} END {for(i in arr){system("echo cn_"i"="arr[i]" >> $GITHUB_OUTPUT")}}'
+          cn_ips=$(kubectl -n mo-checkin-regression-${{ github.event.pull_request.number }} get pods -l matrixorigin.io/component=CNSet -o=jsonpath='{.items[*].status.podIP}' | sed 's/ /,/g')
+          echo "cn_ips=$cn_ips"  >>  $GITHUB_OUTPUT
       - name: Prepare Data in cn-0
         run: |
           export KUBECONFIG=$(pwd)/eks-ci
@@ -173,6 +176,7 @@ jobs:
           locale
           sed -i "s/127.0.0.1:6001/${{ needs.setup_mo_test_env.outputs.mo_svc_ip }}:6001/" ./mo-tester/mo.yml
           sed -i 's/socketTimeout:.*/socketTimeout: 300000/g' ./mo-tester/mo.yml
+          sed -i 's/  serverIP: "127.0.0.1"/  serverIP: "${{ needs.setup_mo_test_env.outputs.cn_ips }}"/g' ./mo-tester/mo.yml
           sed -i 's/waittime:.*/waittime: 2000/g' ./mo-tester/run.yml
           cat ./mo-tester/mo.yml
           echo "=========================="
@@ -180,7 +184,7 @@ jobs:
           echo "=========================="
           
           cd $GITHUB_WORKSPACE/mo-tester
-          ./run.sh -n -g -p $GITHUB_WORKSPACE/matrixone/test/distributed/cases -s /matrixone/test/distributed/resources -e optimistic 2>&1
+          ./run.sh -n -g -o -p $GITHUB_WORKSPACE/matrixone/test/distributed/cases -s /matrixone/test/distributed/resources -e optimistic 2>&1
           rm -rf .git lib
       - name: Collect Upload files
         if: ${{ always() || cancelled() }}
@@ -720,7 +724,11 @@ jobs:
           locale
           
           cd $GITHUB_WORKSPACE/mo-tester
-          ./run.sh -n -g -p $GITHUB_WORKSPACE/matrixone/test/distributed/cases -s  $GITHUB_WORKSPACE/matrixone/test/distributed/resources -e optimistic 2>&1
+          sed -i '' 's/  port: [0-9]*/  port: 12345/g' mo.yml
+          cat mo.yml
+          echo "===================="
+
+          ./run.sh -n -g -o -p $GITHUB_WORKSPACE/matrixone/test/distributed/cases -s  $GITHUB_WORKSPACE/matrixone/test/distributed/resources -e optimistic 2>&1
 
       - name: Dump mo-service goroutines
         if: ${{ always() && !cancelled() }}
@@ -891,24 +899,26 @@ jobs:
           architecture: x64
       - name: Start BVT Test
         id: bvt_on_pr_version
-        continue-on-error: true
         run: |
           export LC_ALL="C.UTF-8"
           locale
           cd $GITHUB_WORKSPACE/mo-tester
-          ./run.sh -n -g -p $GITHUB_WORKSPACE/head/test/distributed/cases 2>&1          
+          sed -i 's/socketTimeout:.*/socketTimeout: 300000/g' mo.yml
+          sed -i 's/  port: [0-9]*/  port: 12345/g' mo.yml
+          cat mo.yml
+          echo "======================================"
+          
+          ./run.sh -n -g -o -p $GITHUB_WORKSPACE/head/test/distributed/cases -e optimistic 2>&1          
       - name: Dump mo-service goroutines
         if: ${{ always() && !cancelled() }}
         run: |
           if [ "$(ps -ef | grep 'mo-service' | grep -v "grep" | wc -l)" -gt 0 ]; then curl http://localhost:12345/debug/pprof/goroutine\?debug=2 -o ${{ github.workspace }}/head/dump-stacks.log; else echo 'current mo-service has already crashed'; exit 1; fi
       - name: Check mo-service Status
         if: ${{ always() && !cancelled() }}
-        continue-on-error: true
         run: |
           if [ "$(ps -ef | grep 'mo-service' | grep -v "grep" | wc -l)" -gt 0 ]; then pkill -9 mo-service; else echo 'current mo-service has already crashed'; exit 1; fi      
       - name: generate upload files
         if: ${{ always() || cancelled() }}
-        continue-on-error: true
         run: |
           mkdir -p ${{ github.workspace }}/upload
           rm -rf ./mo-tester/.git
@@ -917,13 +927,12 @@ jobs:
           mv ${{ github.workspace }}/mo-tester ${{ github.workspace }}/upload/
           mv ${{ github.workspace }}/head/dump-stacks.log ${{ github.workspace }}/upload/          
       - name: check data race
-        continue-on-error: true
+        if: ${{ always() || cancelled() }}
         run: |
           cat ${{ github.workspace }}/upload/mo-service.log | grep -C2 'DATA RACE' || true
           if [ "$(cat ${{ github.workspace }}/upload/mo-service.log |grep 'DATA RACE' | grep -v "grep" | wc -l)" -gt 0 ]; then exit 1; fi        
       - uses: actions/upload-artifact@v3
         if: ${{ always() || cancelled() }}
-        continue-on-error: true
         with:
           name: multi-cn-e2e-with-race-linux-x86-reports
           path: |
