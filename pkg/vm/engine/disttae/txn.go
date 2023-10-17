@@ -27,6 +27,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/container/vector"
 	"github.com/matrixorigin/matrixone/pkg/defines"
 	"github.com/matrixorigin/matrixone/pkg/fileservice"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/objectio"
 	"github.com/matrixorigin/matrixone/pkg/pb/timestamp"
 	"github.com/matrixorigin/matrixone/pkg/pb/txn"
@@ -40,7 +41,7 @@ func (txn *Transaction) getBlockInfos(
 	ctx context.Context,
 	tbl *txnTable,
 ) (blocks []catalog.BlockInfo, err error) {
-	ts := types.TimestampToTS(txn.meta.SnapshotTS)
+	ts := types.TimestampToTS(txn.op.SnapshotTS())
 	state, err := tbl.getPartitionState(ctx)
 	if err != nil {
 		return nil, err
@@ -664,6 +665,7 @@ func (txn *Transaction) getCachedTable(
 
 func (txn *Transaction) Commit(ctx context.Context) ([]txn.TxnRequest, error) {
 	logDebugf(txn.op.Txn(), "Transaction.Commit")
+	logutil.Infof("transaction commit: %s\n", txn.op.Txn().DebugString())
 	txn.IncrStatementID(ctx, true)
 	defer txn.delTransaction()
 	if txn.readOnly.Load() {
@@ -678,7 +680,7 @@ func (txn *Transaction) Commit(ctx context.Context) ([]txn.TxnRequest, error) {
 	if err := txn.dumpBatchLocked(0); err != nil {
 		return nil, err
 	}
-	reqs, err := genWriteReqs(ctx, txn.writes)
+	reqs, err := genWriteReqs(ctx, txn.writes, txn.op.Txn().DebugString())
 	if err != nil {
 		return nil, err
 	}

@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/matrixorigin/matrixone/pkg/queryservice"
 	"math"
 	"math/bits"
 	"os"
@@ -30,6 +29,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/matrixorigin/matrixone/pkg/queryservice"
 
 	"github.com/matrixorigin/matrixone/pkg/catalog"
 	"github.com/matrixorigin/matrixone/pkg/clusterservice"
@@ -821,6 +822,8 @@ var (
 		"mo_sessions":                 0,
 		"mo_configurations":           0,
 		"mo_locks":                    0,
+		"mo_variables":                0,
+		"mo_transactions":             0,
 	}
 	configInitVariables = map[string]int8{
 		"save_query_result":      0,
@@ -850,6 +853,8 @@ var (
 		"mo_sessions":                 0,
 		"mo_configurations":           0,
 		"mo_locks":                    0,
+		"mo_variables":                0,
+		"mo_transactions":             0,
 	}
 	createDbInformationSchemaSql = "create database information_schema;"
 	createAutoTableSql           = fmt.Sprintf(`create table if not exists %s (
@@ -910,7 +915,7 @@ var (
     		);`,
 		`create table mo_account(
 				account_id int signed auto_increment primary key,
-				account_name varchar(300),
+				account_name varchar(300) unique key,
 				status varchar(300),
 				created_time timestamp,
 				comments varchar(256),
@@ -1027,6 +1032,8 @@ var (
 		`CREATE VIEW IF NOT EXISTS mo_sessions AS SELECT * FROM mo_sessions() AS mo_sessions_tmp;`,
 		`CREATE VIEW IF NOT EXISTS mo_configurations AS SELECT * FROM mo_configurations() AS mo_configurations_tmp;`,
 		`CREATE VIEW IF NOT EXISTS mo_locks AS SELECT * FROM mo_locks() AS mo_locks_tmp;`,
+		`CREATE VIEW IF NOT EXISTS mo_variables AS SELECT * FROM mo_catalog.mo_mysql_compatibility_mode;`,
+		`CREATE VIEW IF NOT EXISTS mo_transactions AS SELECT * FROM mo_transactions() AS mo_transactions_tmp;`,
 	}
 
 	//drop tables for the tenant
@@ -1043,9 +1050,10 @@ var (
 		`drop view if exists mo_catalog.mo_sessions;`,
 		`drop view if exists mo_catalog.mo_configurations;`,
 		`drop view if exists mo_catalog.mo_locks;`,
+		`drop view if exists mo_catalog.mo_variables;`,
+		`drop view if exists mo_catalog.mo_transactions;`,
 	}
 	dropMoPubsSql         = `drop table if exists mo_catalog.mo_pubs;`
-	deleteMoPubsSql       = `delete from mo_catalog.mo_pubs;`
 	dropAutoIcrColSql     = fmt.Sprintf("drop table if exists mo_catalog.`%s`;", catalog.MOAutoIncrTable)
 	dropMoIndexes         = fmt.Sprintf(`drop table if exists %s.%s;`, catalog.MO_CATALOG, catalog.MO_INDEXES)
 	dropMoTablePartitions = fmt.Sprintf(`drop table if exists %s.%s;`, catalog.MO_CATALOG, catalog.MO_TABLE_PARTITIONS)
@@ -4130,14 +4138,6 @@ func doDropAccount(ctx context.Context, ses *Session, da *tree.DropAccount) (err
 			}
 		}
 
-		// delete all publications
-
-		err = bh.Exec(deleteCtx, deleteMoPubsSql)
-
-		if err != nil {
-			return err
-		}
-
 		//drop databases created by user
 		databases = make(map[string]int8)
 		dbSql = "show databases;"
@@ -4307,7 +4307,7 @@ func postDropSuspendAccount(
 	}
 
 	handleValidResponse := func(nodeAddr string, rsp *query.Response) {
-		if rsp.KillConnResponse != nil && !rsp.KillConnResponse.Success {
+		if rsp != nil && rsp.KillConnResponse != nil && !rsp.KillConnResponse.Success {
 			retErr = moerr.NewInternalError(ctx,
 				fmt.Sprintf("kill connection for account %s failed on node %s", accountName, nodeAddr))
 		}
@@ -9173,7 +9173,7 @@ func postAlterSessionStatus(
 	}
 
 	handleValidResponse := func(nodeAddr string, rsp *query.Response) {
-		if rsp.AlterAccountResponse != nil && !rsp.AlterAccountResponse.AlterSuccess {
+		if rsp != nil && rsp.AlterAccountResponse != nil && !rsp.AlterAccountResponse.AlterSuccess {
 			retErr = moerr.NewInternalError(ctx,
 				fmt.Sprintf("alter account status for account %s failed on node %s", accountName, nodeAddr))
 		}

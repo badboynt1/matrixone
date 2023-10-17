@@ -330,6 +330,14 @@ func (o *testOperator) Txn() txn.TxnMeta {
 	return txn.TxnMeta{}
 }
 
+func (o *testOperator) SnapshotTS() timestamp.Timestamp {
+	panic("should not call")
+}
+
+func (o *testOperator) Status() txn.TxnStatus {
+	panic("should not call")
+}
+
 func (o *testOperator) TxnRef() *txn.TxnMeta {
 	return &txn.TxnMeta{}
 }
@@ -360,4 +368,16 @@ func (o *testOperator) AppendEventCallback(event client.EventType, callbacks ...
 
 func (o *testOperator) Debug(ctx context.Context, ops []txn.TxnRequest) (*rpc.SendResult, error) {
 	panic("unimplemented")
+}
+
+func (o *testOperator) AddWaitLock(tableID uint64, rows [][]byte, opt lock.LockOptions) uint64 {
+	panic("should not call")
+}
+
+func (o *testOperator) RemoveWaitLock(key uint64) {
+	panic("should not call")
+}
+
+func (o *testOperator) GetOverview() client.TxnOverview {
+	panic("should not call")
 }

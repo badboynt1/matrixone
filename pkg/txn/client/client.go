@@ -31,6 +31,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/txn/clock"
 	"github.com/matrixorigin/matrixone/pkg/txn/rpc"
 	"github.com/matrixorigin/matrixone/pkg/txn/util"
+	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
 	"go.uber.org/ratelimit"
 	"go.uber.org/zap"
 )
@@ -223,7 +224,7 @@ func (client *txnClient) New(
 	txnMeta.Mode = client.getTxnMode()
 	txnMeta.Isolation = client.getTxnIsolation()
 	if client.lockService != nil {
-		txnMeta.LockService = client.lockService.GetConfig().ServiceID
+		txnMeta.LockService = client.lockService.GetServiceID()
 	}
 
 	options = append(options,
@@ -329,6 +330,9 @@ func (client *txnClient) updateLastCommitTS(txn txn.TxnMeta) {
 func (client *txnClient) determineTxnSnapshot(
 	ctx context.Context,
 	minTS timestamp.Timestamp) (timestamp.Timestamp, error) {
+	start := time.Now()
+	defer v2.TxnDetermineSnapshotDurationHistogram.Observe(time.Since(start).Seconds())
+
 	// always use the current ts as txn's snapshot ts is enableSacrificingFreshness
 	if !client.enableSacrificingFreshness {
 		// TODO: Consider how to handle clock offsets. If use Clock-SI, can use the current
@@ -507,4 +511,26 @@ func (client *txnClient) removeFromLeakCheck(id []byte) {
 	if client.leakChecker != nil {
 		client.leakChecker.txnClosed(id)
 	}
+}
+
+func (client *txnClient) IterTxns(fn func(TxnOverview) bool) {
+	ops := client.getAllTxnOperators()
+
+	for _, op := range ops {
+		if !fn(op.GetOverview()) {
+			return
+		}
+	}
+}
+
+func (client *txnClient) getAllTxnOperators() []*txnOperator {
+	client.mu.RLock()
+	defer client.mu.RUnlock()
+
+	ops := make([]*txnOperator, 0, len(client.mu.activeTxns)+len(client.mu.waitActiveTxns))
+	for _, op := range client.mu.activeTxns {
+		ops = append(ops, op)
+	}
+	ops = append(ops, client.mu.waitActiveTxns...)
+	return ops
 }

@@ -99,6 +99,7 @@ func (w *BlockWriter) WriteBatch(batch *batch.Batch) (objectio.BlockObject, erro
 		if err = index.BatchUpdateZM(zm, columnData.GetDownstreamVector()); err != nil {
 			return nil, err
 		}
+		index.SetZMSum(zm, columnData.GetDownstreamVector())
 		// Update column meta zonemap
 		w.writer.UpdateBlockZM(int(block.GetID()), seqnums[i], zm)
 		// update object zonemap
@@ -128,7 +129,7 @@ func (w *BlockWriter) WriteTombstoneBatch(batch *batch.Batch) (objectio.BlockObj
 	return w.writer.WriteTombstone(batch)
 }
 
-func (w *BlockWriter) WriteSubBatch(batch *batch.Batch, dataType objectio.DataMetaType) (objectio.BlockObject, error) {
+func (w *BlockWriter) WriteSubBatch(batch *batch.Batch, dataType objectio.DataMetaType) (objectio.BlockObject, int, error) {
 	return w.writer.WriteSubBlock(batch, dataType)
 }
 

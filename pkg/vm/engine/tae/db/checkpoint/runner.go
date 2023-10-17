@@ -61,19 +61,10 @@ func (p *timeBasedPolicy) Check(last types.TS) bool {
 
 type countBasedPolicy struct {
 	minCount int
-	current  int
 }
 
-func (p *countBasedPolicy) Check() bool {
-	return p.current >= p.minCount
-}
-
-func (p *countBasedPolicy) Add(cnt int) {
-	p.current++
-}
-
-func (p *countBasedPolicy) Reset() {
-	p.current = 0
+func (p *countBasedPolicy) Check(current int) bool {
+	return current >= p.minCount
 }
 
 type globalCheckpointContext struct {
@@ -190,6 +181,7 @@ type runner struct {
 		checkpointQueueSize int
 
 		checkpointBlockRows int
+		checkpointSize      int
 
 		reservedWALEntryCount uint64
 	}
@@ -287,6 +279,7 @@ func (r *runner) String() string {
 	_, _ = fmt.Fprintf(&buf, "waitQueueSize=%v, ", r.options.waitQueueSize)
 	_, _ = fmt.Fprintf(&buf, "checkpointQueueSize=%v, ", r.options.checkpointQueueSize)
 	_, _ = fmt.Fprintf(&buf, "checkpointBlockRows=%v, ", r.options.checkpointBlockRows)
+	_, _ = fmt.Fprintf(&buf, "checkpointSize=%v, ", r.options.checkpointSize)
 	_, _ = fmt.Fprintf(&buf, ">")
 	return buf.String()
 }
@@ -305,8 +298,8 @@ func (r *runner) onGlobalCheckpointEntries(items ...any) {
 		if ctx.force {
 			doCheckpoint = true
 		} else {
-			r.globalPolicy.Add(1)
-			if r.globalPolicy.Check() {
+			entriesCount := r.GetPenddingIncrementalCount()
+			if r.globalPolicy.Check(entriesCount) {
 				doCheckpoint = true
 			}
 		}
@@ -322,7 +315,6 @@ func (r *runner) onGlobalCheckpointEntries(items ...any) {
 				continue
 			}
 			logutil.Infof("%s is done, takes %s", entry.String(), time.Since(now))
-			r.globalPolicy.Reset()
 		}
 	}
 }
@@ -515,7 +507,7 @@ func (r *runner) doIncrementalCheckpoint(entry *CheckpointEntry) (err error) {
 		return
 	}
 	defer data.Close()
-	cnLocation, tnLocation, err := data.WriteTo(r.rt.Fs.Service, r.options.checkpointBlockRows)
+	cnLocation, tnLocation, err := data.WriteTo(r.rt.Fs.Service, r.options.checkpointBlockRows, r.options.checkpointSize)
 	if err != nil {
 		return
 	}
@@ -538,7 +530,7 @@ func (r *runner) doGlobalCheckpoint(end types.TS, ckpLSN, truncateLSN uint64, in
 	}
 	defer data.Close()
 
-	cnLocation, tnLocation, err := data.WriteTo(r.rt.Fs.Service, r.options.checkpointBlockRows)
+	cnLocation, tnLocation, err := data.WriteTo(r.rt.Fs.Service, r.options.checkpointBlockRows, r.options.checkpointSize)
 	if err != nil {
 		return
 	}
@@ -700,6 +692,9 @@ func (r *runner) fillDefaults() {
 	}
 	if r.options.checkpointBlockRows <= 0 {
 		r.options.checkpointBlockRows = logtail.DefaultCheckpointBlockRows
+	}
+	if r.options.checkpointSize <= 0 {
+		r.options.checkpointSize = logtail.DefaultCheckpointSize
 	}
 }
 

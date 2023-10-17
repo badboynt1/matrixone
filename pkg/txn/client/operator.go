@@ -21,6 +21,7 @@ import (
 	"errors"
 	gotrace "runtime/trace"
 	"sync"
+	"time"
 
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	moruntime "github.com/matrixorigin/matrixone/pkg/common/runtime"
@@ -32,6 +33,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/txn/clock"
 	"github.com/matrixorigin/matrixone/pkg/txn/rpc"
 	"github.com/matrixorigin/matrixone/pkg/txn/util"
+	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
 	"go.uber.org/zap"
 )
 
@@ -165,16 +167,21 @@ type txnOperator struct {
 
 	mu struct {
 		sync.RWMutex
+		waitActive   bool
 		closed       bool
 		txn          txn.TxnMeta
 		cachedWrites map[uint64][]txn.TxnRequest
 		lockTables   []lock.LockTable
 		callbacks    map[EventType][]func(txn.TxnMeta)
 		retry        bool
+
+		lockSeq   uint64
+		waitLocks map[uint64]Lock
 	}
 	workspace       Workspace
 	timestampWaiter TimestampWaiter
 	clock           clock.Clock
+	createAt        time.Time
 }
 
 func newTxnOperator(
@@ -186,11 +193,18 @@ func newTxnOperator(
 	tc.mu.txn = txnMeta
 	tc.txnID = txnMeta.ID
 	tc.clock = clock
+	tc.createAt = time.Now()
 	for _, opt := range options {
 		opt(tc)
 	}
 	tc.adjust()
 	util.LogTxnCreated(tc.mu.txn)
+
+	if tc.option.user {
+		v2.GetUserTxnCounter().Inc()
+	} else {
+		v2.GetInternalTxnCounter().Inc()
+	}
 	return tc
 }
 
@@ -220,11 +234,24 @@ func (tc *txnOperator) isUserTxn() bool {
 	return tc.option.user
 }
 
+func (tc *txnOperator) setWaitActive(v bool) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	tc.mu.waitActive = v
+}
+
 func (tc *txnOperator) waitActive(ctx context.Context) error {
+	start := time.Now()
+	defer v2.TxnWaitActiveDurationHistogram.Observe(time.Since(start).Seconds())
+
 	if tc.waiter == nil {
 		return nil
 	}
-	defer tc.waiter.close()
+	tc.setWaitActive(true)
+	defer func() {
+		tc.waiter.close()
+		tc.setWaitActive(false)
+	}()
 	return tc.waiter.wait(ctx)
 }
 
@@ -267,6 +294,18 @@ func (tc *txnOperator) TxnRef() *txn.TxnMeta {
 	tc.mu.RLock()
 	defer tc.mu.RUnlock()
 	return &tc.mu.txn
+}
+
+func (tc *txnOperator) SnapshotTS() timestamp.Timestamp {
+	tc.mu.RLock()
+	defer tc.mu.RUnlock()
+	return tc.mu.txn.SnapshotTS
+}
+
+func (tc *txnOperator) Status() txn.TxnStatus {
+	tc.mu.RLock()
+	defer tc.mu.RUnlock()
+	return tc.mu.txn.Status
 }
 
 func (tc *txnOperator) Snapshot() ([]byte, error) {
@@ -393,10 +432,15 @@ func (tc *txnOperator) Write(ctx context.Context, requests []txn.TxnRequest) (*r
 func (tc *txnOperator) WriteAndCommit(ctx context.Context, requests []txn.TxnRequest) (*rpc.SendResult, error) {
 	_, task := gotrace.NewTask(context.TODO(), "transaction.WriteAndCommit")
 	defer task.End()
+	util.LogTxnWrite(tc.getTxnMeta(false))
+	util.LogTxnCommit(tc.getTxnMeta(false))
 	return tc.doWrite(ctx, requests, true)
 }
 
 func (tc *txnOperator) Commit(ctx context.Context) error {
+	start := time.Now()
+	v2.TxnCommitDurationHistogram.Observe(time.Since(start).Seconds())
+
 	_, task := gotrace.NewTask(context.TODO(), "transaction.Commit")
 	defer task.End()
 	util.LogTxnCommit(tc.getTxnMeta(false))
@@ -897,7 +941,9 @@ func (tc *txnOperator) unlock(ctx context.Context) {
 	// rc mode need to see the committed value, so wait logtail applied
 	if tc.mu.txn.IsRCIsolation() &&
 		tc.timestampWaiter != nil {
+		start := time.Now()
 		_, err := tc.timestampWaiter.GetTimestamp(ctx, tc.mu.txn.CommitTS)
+		v2.LogTailWaitDurationHistogram.Observe(time.Since(start).Seconds())
 		if err != nil {
 			util.GetLogger().Error("txn wait committed log applied failed in rc mode",
 				util.TxnField(tc.mu.txn),
@@ -928,4 +974,54 @@ func (tc *txnOperator) closeLocked() {
 		tc.mu.closed = true
 		tc.triggerEventLocked(ClosedEvent)
 	}
+}
+
+func (tc *txnOperator) AddWaitLock(tableID uint64, rows [][]byte, opt lock.LockOptions) uint64 {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	if tc.mu.waitLocks == nil {
+		tc.mu.waitLocks = make(map[uint64]Lock)
+	}
+
+	seq := tc.mu.lockSeq
+	tc.mu.lockSeq++
+
+	tc.mu.waitLocks[seq] = Lock{
+		TableID: tableID,
+		Rows:    rows,
+		Options: opt,
+	}
+	return seq
+}
+
+func (tc *txnOperator) RemoveWaitLock(key uint64) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	delete(tc.mu.waitLocks, key)
+}
+
+func (tc *txnOperator) GetOverview() TxnOverview {
+	tc.mu.RLock()
+	defer tc.mu.RUnlock()
+
+	return TxnOverview{
+		CreateAt:  tc.createAt,
+		Meta:      tc.mu.txn,
+		UserTxn:   tc.option.user,
+		WaitLocks: tc.getWaitLocksLocked(),
+	}
+}
+
+func (tc *txnOperator) getWaitLocksLocked() []Lock {
+
+	if tc.mu.waitLocks == nil {
+		return nil
+	}
+
+	values := make([]Lock, 0, len(tc.mu.waitLocks))
+	for _, l := range tc.mu.waitLocks {
+		values = append(values, l)
+	}
+	return values
 }

@@ -1,4 +1,4 @@
-// Copyright 2022 Matrix Origin
+// Copyright 2023 Matrix Origin
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,15 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package fileservice
+package v2
 
-type S3Config struct {
-	SharedConfigProfile string `toml:"shared-config-profile"`
-	Endpoint            string `toml:"endpoint"`
-	Bucket              string `toml:"bucket"`
-	// KeyPrefix enables multiple fs instances in one bucket
-	KeyPrefix string `toml:"key-prefix"`
-}
+import (
+	"github.com/prometheus/client_golang/prometheus"
+)
 
-// key mapping scheme:
-// <KeyPrefix>/<file path> -> file content
+var (
+	LogTailSizeGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tn",
+			Subsystem: "logtail",
+			Name:      "commit_bytes",
+			Help:      "Size of logtail size.",
+		})
+)
