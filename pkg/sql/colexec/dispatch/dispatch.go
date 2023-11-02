@@ -99,7 +99,6 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 	if bat == nil && ap.RecSink {
 		bat = makeEndBatch(proc)
 	} else if bat == nil {
-		logutil.Infof("dispatch end!!!!!!")
 		if ap.ctr.cnt != nil {
 			logutil.Infof("shuffle dispatch cnt %v ", ap.ctr.cnt)
 		}

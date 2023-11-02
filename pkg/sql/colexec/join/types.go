@@ -57,6 +57,9 @@ type container struct {
 	vecs  []*vector.Vector
 
 	mp *hashmap.JoinMap
+
+	incnt  int
+	outcnt int
 }
 
 type Argument struct {

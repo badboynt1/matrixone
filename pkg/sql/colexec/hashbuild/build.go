@@ -16,6 +16,7 @@ package hashbuild
 
 import (
 	"bytes"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 
 	"github.com/matrixorigin/matrixone/pkg/common/hashmap"
 	"github.com/matrixorigin/matrixone/pkg/common/runtime"
@@ -334,6 +335,7 @@ func (ctr *container) build(ap *Argument, proc *process.Process, anal process.An
 		return err
 	}
 	ctr.inputBatchRowCount = ctr.bat.RowCount()
+	logutil.Infof("join build input %v", ctr.inputBatchRowCount)
 	err = ctr.buildHashmapByMergedBatch(ap, proc)
 	if err != nil {
 		return err

@@ -16,6 +16,7 @@ package shuffle
 
 import (
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
 )
 
@@ -47,6 +48,9 @@ type container struct {
 func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error) {
 	for i := range arg.ctr.shuffledBats {
 		if arg.ctr.shuffledBats[i] != nil {
+			if arg.ctr.shuffledBats[i].RowCount() != 0 {
+				logutil.Infof("shuffle do not send all data!!!!!!!!!!!!!!!")
+			}
 			arg.ctr.shuffledBats[i].Clean(proc.Mp())
 			arg.ctr.shuffledBats[i] = nil
 		}

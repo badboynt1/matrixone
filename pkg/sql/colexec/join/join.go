@@ -19,6 +19,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/common/hashmap"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	"github.com/matrixorigin/matrixone/pkg/container/vector"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
 )
@@ -73,6 +74,7 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 
 			if bat == nil {
 				ctr.state = End
+				logutil.Infof("join probe incnt %v hash %v, outcnt %v", ap.ctr.incnt, ap.ctr.bat.RowCount(), ap.ctr.outcnt)
 				continue
 			}
 			if bat.Last() {
@@ -116,6 +118,7 @@ func (ctr *container) build(proc *process.Process, anal process.Analyze) error {
 func (ctr *container) probe(bat *batch.Batch, ap *Argument, proc *process.Process, anal process.Analyze, isFirst bool, isLast bool) error {
 	defer proc.PutBatch(bat)
 
+	ap.ctr.incnt += bat.RowCount()
 	anal.Input(bat, isFirst)
 	rbat := batch.NewWithSize(len(ap.Result))
 	for i, rp := range ap.Result {
@@ -211,6 +214,7 @@ func (ctr *container) probe(bat *batch.Batch, ap *Argument, proc *process.Proces
 
 	rbat.AddRowCount(rowCount)
 	anal.Output(rbat, isLast)
+	ap.ctr.outcnt += rbat.RowCount()
 	proc.SetInputBatch(rbat)
 	return nil
 }
