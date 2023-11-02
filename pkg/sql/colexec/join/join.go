@@ -74,7 +74,7 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 
 			if bat == nil {
 				ctr.state = End
-				logutil.Infof("join probe incnt %v hash %v, outcnt %v", ap.ctr.incnt, ap.ctr.bat.RowCount(), ap.ctr.outcnt)
+				logutil.Infof("join probe incnt batch %v, row %v hashtable %v, outcnt %v", ap.ctr.inbatches, ap.ctr.incnt, ap.ctr.bat.RowCount(), ap.ctr.outcnt)
 				continue
 			}
 			if bat.Last() {
@@ -119,6 +119,7 @@ func (ctr *container) probe(bat *batch.Batch, ap *Argument, proc *process.Proces
 	defer proc.PutBatch(bat)
 
 	ap.ctr.incnt += bat.RowCount()
+	ap.ctr.inbatches++
 	anal.Input(bat, isFirst)
 	rbat := batch.NewWithSize(len(ap.Result))
 	for i, rp := range ap.Result {

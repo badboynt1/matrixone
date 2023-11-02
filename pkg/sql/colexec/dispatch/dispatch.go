@@ -53,7 +53,8 @@ func Prepare(proc *process.Process, arg any) error {
 
 	case ShuffleToAllFunc:
 		ap.ctr.sendFunc = shuffleToAllFunc
-		ap.ctr.cnt = make([]int, ap.ctr.aliveRegCnt)
+		ap.ctr.rowCnt = make([]int, ap.ctr.aliveRegCnt)
+		ap.ctr.batchCnt = make([]int, ap.ctr.aliveRegCnt)
 		if ap.ctr.remoteRegsCnt > 0 {
 			ap.prepareRemote(proc)
 		} else {
@@ -99,8 +100,8 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 	if bat == nil && ap.RecSink {
 		bat = makeEndBatch(proc)
 	} else if bat == nil {
-		if ap.ctr.cnt != nil {
-			logutil.Infof("shuffle dispatch cnt %v ", ap.ctr.cnt)
+		if ap.ctr.rowCnt != nil {
+			logutil.Infof("shuffle dispatch rowCnt %v, batchCnt %v ", ap.ctr.rowCnt, ap.ctr.batchCnt)
 		}
 		return process.ExecStop, nil
 	}

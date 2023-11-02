@@ -105,12 +105,13 @@ func sendToAllRemoteFunc(bat *batch.Batch, ap *Argument, proc *process.Process) 
 }
 
 func sendBatToIndex(ap *Argument, proc *process.Process, bat *batch.Batch, regIndex uint32) error {
-	ap.ctr.cnt[regIndex] += bat.RowCount()
 
 	for i, reg := range ap.LocalRegs {
 		batIndex := uint32(ap.ShuffleRegIdxLocal[i])
 		if regIndex == batIndex {
 			if bat != nil && bat.RowCount() != 0 {
+				ap.ctr.rowCnt[regIndex] += bat.RowCount()
+				ap.ctr.batchCnt[regIndex]++
 				select {
 				case <-proc.Ctx.Done():
 					logutil.Infof("proc.ctx.done in shuffle dispatch!!!!!!!!")
@@ -268,7 +269,7 @@ func sendToAnyLocalFunc(bat *batch.Batch, ap *Argument, proc *process.Process) (
 func sendToAnyRemoteFunc(bat *batch.Batch, ap *Argument, proc *process.Process) (bool, error) {
 	if !ap.ctr.prepared {
 		end, _ := ap.waitRemoteRegsReady(proc)
-		// update the cnt
+		// update the rowCnt
 		ap.ctr.remoteRegsCnt = len(ap.ctr.remoteReceivers)
 		ap.ctr.aliveRegCnt = ap.ctr.remoteRegsCnt + ap.ctr.localRegsCnt
 		if end || ap.ctr.remoteRegsCnt == 0 {

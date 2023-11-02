@@ -258,6 +258,7 @@ func (proc *Process) CopyVectorPool(src *Process) {
 }
 
 func (proc *Process) PutBatch(bat *batch.Batch) {
+	return
 	if bat == batch.EmptyBatch {
 		return
 	}
