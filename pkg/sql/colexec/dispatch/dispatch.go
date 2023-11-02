@@ -22,6 +22,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/container/vector"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
 )
@@ -52,6 +53,7 @@ func Prepare(proc *process.Process, arg any) error {
 
 	case ShuffleToAllFunc:
 		ap.ctr.sendFunc = shuffleToAllFunc
+		ap.ctr.cnt = make([]int, ap.ctr.aliveRegCnt)
 		if ap.ctr.remoteRegsCnt > 0 {
 			ap.prepareRemote(proc)
 		} else {
@@ -93,11 +95,17 @@ func Prepare(proc *process.Process, arg any) error {
 func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (process.ExecStatus, error) {
 	ap := arg.(*Argument)
 	bat := proc.InputBatch()
+
 	if bat == nil && ap.RecSink {
 		bat = makeEndBatch(proc)
 	} else if bat == nil {
+		logutil.Infof("dispatch end!!!!!!")
+		if ap.ctr.cnt != nil {
+			logutil.Infof("shuffle dispatch cnt %v ", ap.ctr.cnt)
+		}
 		return process.ExecStop, nil
 	}
+
 	if bat.Last() {
 		if !ap.ctr.hasData {
 			bat.SetEnd()
@@ -177,4 +185,5 @@ func (arg *Argument) prepareLocal() {
 	arg.ctr.prepared = true
 	arg.ctr.isRemote = false
 	arg.ctr.remoteReceivers = nil
+
 }

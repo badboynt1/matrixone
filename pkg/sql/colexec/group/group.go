@@ -17,6 +17,7 @@ package group
 import (
 	"bytes"
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 
 	"github.com/matrixorigin/matrixone/pkg/common/hashmap"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
@@ -249,6 +250,7 @@ func (ctr *container) processWithGroup(ap *Argument, proc *process.Process, anal
 	var err error
 	bat := proc.InputBatch()
 	if bat == nil {
+		logutil.Infof("group input %v", ap.ctr.incnt)
 		if ctr.bat != nil {
 			if ap.NeedEval {
 				for i, ag := range ctr.bat.Aggs {
@@ -278,6 +280,7 @@ func (ctr *container) processWithGroup(ap *Argument, proc *process.Process, anal
 		return process.ExecNext, nil
 	}
 
+	ap.ctr.incnt += bat.RowCount()
 	defer proc.PutBatch(bat)
 	anal.Input(bat, isFirst)
 	proc.SetInputBatch(batch.EmptyBatch)

@@ -754,6 +754,7 @@ func (c *Compile) compileQuery(ctx context.Context, qry *plan.Query) ([]*Scope, 
 		}
 		steps = append(steps, scope)
 	}
+
 	return steps, err
 }
 

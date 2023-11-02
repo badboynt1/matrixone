@@ -73,6 +73,8 @@ type container struct {
 
 	remoteToIdx map[uuid.UUID]int
 	hasData     bool
+
+	cnt []int
 }
 
 type Argument struct {

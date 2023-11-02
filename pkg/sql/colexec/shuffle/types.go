@@ -40,6 +40,8 @@ type container struct {
 	state        int
 	sels         [][]int32
 	shuffledBats []*batch.Batch
+	incnt        int
+	outcnt       int
 }
 
 func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error) {

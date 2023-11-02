@@ -19,6 +19,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/container/vector"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
 	plan2 "github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
@@ -49,6 +50,7 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 	if bat == nil {
 		return sendOneBatch(ap, proc, true), nil
 	}
+	ap.ctr.incnt += bat.RowCount()
 	if bat.IsEmpty() {
 		proc.PutBatch(bat)
 		proc.SetInputBatch(batch.EmptyBatch)
@@ -195,6 +197,7 @@ func sendOneBatch(ap *Argument, proc *process.Process, isEnding bool) process.Ex
 			if !findOneBatch {
 				findOneBatch = true
 				proc.SetInputBatch(ap.ctr.shuffledBats[i])
+				ap.ctr.outcnt += ap.ctr.shuffledBats[i].RowCount()
 				ap.ctr.shuffledBats[i] = nil
 			} else {
 				if isEnding {
@@ -211,6 +214,10 @@ func sendOneBatch(ap *Argument, proc *process.Process, isEnding bool) process.Ex
 	}
 	ap.ctr.state = input
 	if isEnding {
+		logutil.Infof("shuffle input %v output %v", ap.ctr.incnt, ap.ctr.outcnt)
+		if ap.ctr.incnt != ap.ctr.outcnt {
+			logutil.Errorf("!!!!!!!!!!!!!!! shuffle error !!!!!!!!!!!!!")
+		}
 		return process.ExecStop
 	}
 	return process.ExecNext
@@ -382,6 +389,7 @@ func rangeShuffle(bat *batch.Batch, ap *Argument, proc *process.Process) (proces
 		if ok {
 			bat.ShuffleIDX = int(regIndex)
 			proc.SetInputBatch(bat)
+			ap.ctr.outcnt += bat.RowCount()
 			return process.ExecNext, nil
 		}
 	}
@@ -391,6 +399,7 @@ func rangeShuffle(bat *batch.Batch, ap *Argument, proc *process.Process) (proces
 		if len(sels[i]) == bat.RowCount() {
 			bat.ShuffleIDX = i
 			proc.SetInputBatch(bat)
+			ap.ctr.outcnt += bat.RowCount()
 			return process.ExecNext, nil
 		}
 	}

@@ -69,6 +69,8 @@ type container struct {
 	hasAggResult bool
 
 	tmpVecs []*vector.Vector // for reuse
+
+	incnt int
 }
 
 type Argument struct {
