@@ -17,6 +17,7 @@ package merge
 import (
 	"bytes"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
 )
@@ -45,6 +46,7 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 		bat, end, _ = ctr.ReceiveFromAllRegs(anal)
 		if end {
 			proc.SetInputBatch(nil)
+			logutil.Infof("merge send %v batches, %v rows", ap.inbatch, ap.incnt)
 			return process.ExecStop, nil
 		}
 
@@ -57,6 +59,8 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 
 	anal.Input(bat, isFirst)
 	anal.Output(bat, isLast)
+	ap.incnt += bat.RowCount()
+	ap.inbatch++
 	proc.SetInputBatch(bat)
 	return process.ExecNext, nil
 }

@@ -20,7 +20,9 @@ import (
 
 // Argument pipe connector
 type Argument struct {
-	Reg *process.WaitRegister
+	Reg     *process.WaitRegister
+	incnt   int
+	inbatch int
 }
 
 func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error) {

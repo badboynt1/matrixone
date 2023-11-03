@@ -15,6 +15,7 @@
 package colexec
 
 import (
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"reflect"
 	"time"
 
@@ -47,9 +48,11 @@ func (r *ReceiverOperator) ReceiveFromSingleReg(regIdx int, analyze process.Anal
 	defer analyze.WaitStop(start)
 	select {
 	case <-r.proc.Ctx.Done():
+		logutil.Infof("!!!!!!join probe context donw")
 		return nil, true, nil
 	case bat, ok := <-r.proc.Reg.MergeReceivers[regIdx].Ch:
 		if !ok {
+			logutil.Infof("!!!!!!join probe no ok")
 			return nil, true, nil
 		}
 		return bat, false, nil

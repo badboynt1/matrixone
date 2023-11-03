@@ -17,6 +17,7 @@ package connector
 import (
 	"bytes"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
 )
 
@@ -33,6 +34,7 @@ func Call(_ int, proc *process.Process, arg any, _ bool, _ bool) (process.ExecSt
 	reg := ap.Reg
 	bat := proc.InputBatch()
 	if bat == nil {
+		logutil.Infof("connector send %v batches, %v rows", ap.inbatch, ap.incnt)
 		return process.ExecStop, nil
 	}
 	if bat.IsEmpty() {
@@ -41,6 +43,8 @@ func Call(_ int, proc *process.Process, arg any, _ bool, _ bool) (process.ExecSt
 		return process.ExecNext, nil
 	}
 
+	ap.incnt += bat.RowCount()
+	ap.inbatch++
 	// there is no need to log anything here.
 	// because the context is already canceled means the pipeline closed normally.
 	select {

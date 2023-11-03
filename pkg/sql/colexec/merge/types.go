@@ -27,6 +27,8 @@ type container struct {
 type Argument struct {
 	ctr      *container
 	SinkScan bool
+	incnt    int
+	inbatch  int
 }
 
 func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error) {
