@@ -68,15 +68,23 @@ func Call(idx int, proc *process.Process, arg any, isFirst bool, isLast bool) (p
 			}
 		case Probe:
 			bat, _, err := ctr.ReceiveFromSingleReg(0, anal)
+			ap.ctr.inbatches++
+			
 			if err != nil {
 				return process.ExecNext, err
 			}
 
 			if bat == nil {
 				ctr.state = End
+				logutil.Infof("join probe receive batch indexes %v", ap.ctr.indexes)
 				logutil.Infof("join probe incnt batch %v, row %v hashtable %v, outcnt %v", ap.ctr.inbatches, ap.ctr.incnt, ap.ctr.bat.RowCount(), ap.ctr.outcnt)
 				continue
 			}
+			if ap.ctr.indexes == nil {
+				ap.ctr.indexes = make([]int, 0, 1024)
+			}
+			ap.ctr.indexes = append(ap.ctr.indexes, bat.ShuffleIDX)
+
 			if bat.Last() {
 				proc.SetInputBatch(bat)
 				return process.ExecNext, nil
@@ -119,7 +127,7 @@ func (ctr *container) probe(bat *batch.Batch, ap *Argument, proc *process.Proces
 	defer proc.PutBatch(bat)
 
 	ap.ctr.incnt += bat.RowCount()
-	ap.ctr.inbatches++
+
 	anal.Input(bat, isFirst)
 	rbat := batch.NewWithSize(len(ap.Result))
 	for i, rp := range ap.Result {

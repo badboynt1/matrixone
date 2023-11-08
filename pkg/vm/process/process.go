@@ -17,6 +17,7 @@ package process
 import (
 	"context"
 	"github.com/matrixorigin/matrixone/pkg/logservice"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"sync/atomic"
 	"time"
 
@@ -124,6 +125,7 @@ func (wreg *WaitRegister) CleanChannel(m *mpool.MPool) {
 	for len(wreg.Ch) > 0 {
 		bat := <-wreg.Ch
 		if bat != nil {
+			logutil.Infof("!!!!!!!!!!! clean channel")
 			bat.Clean(m)
 		}
 	}

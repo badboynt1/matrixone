@@ -58,9 +58,10 @@ type container struct {
 
 	mp *hashmap.JoinMap
 
-	inbatches int
-	incnt     int
-	outcnt    int
+	inbatches, inbatchesInMergeReceiver int
+	incnt                               int
+	outcnt                              int
+	indexes                             []int
 }
 
 type Argument struct {

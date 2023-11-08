@@ -132,6 +132,7 @@ func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error)
 		if !pipelineFailed {
 			select {
 			case <-arg.LocalRegs[i].Ctx.Done():
+
 			case arg.LocalRegs[i].Ch <- nil:
 			}
 		} else {
