@@ -48,11 +48,11 @@ func (r *ReceiverOperator) ReceiveFromSingleReg(regIdx int, analyze process.Anal
 	defer analyze.WaitStop(start)
 	select {
 	case <-r.proc.Ctx.Done():
-		logutil.Infof("!!!!!!join probe context donw")
+		logutil.Infof("!!!!!!join probe context done")
 		return nil, true, nil
 	case bat, ok := <-r.proc.Reg.MergeReceivers[regIdx].Ch:
 		if !ok {
-			logutil.Infof("!!!!!!join probe no ok")
+			logutil.Infof("!!!!!!join probe receive not ok")
 			return nil, true, nil
 		}
 		return bat, false, nil
