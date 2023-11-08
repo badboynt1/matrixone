@@ -111,7 +111,7 @@ func sendBatToIndex(ap *Argument, proc *process.Process, bat *batch.Batch, regIn
 		if regIndex == batIndex {
 			if bat != nil && bat.RowCount() != 0 {
 				ap.ctr.rowCnt[regIndex] += bat.RowCount()
-				ap.ctr.batchCnt[regIndex]++
+
 				select {
 				case <-proc.Ctx.Done():
 					logutil.Infof("proc.ctx.done in shuffle dispatch!!!!!!!!")
@@ -122,7 +122,7 @@ func sendBatToIndex(ap *Argument, proc *process.Process, bat *batch.Batch, regIn
 					return nil
 
 				case reg.Ch <- bat:
-
+					ap.ctr.batchCnt[regIndex]++
 				}
 			}
 		}

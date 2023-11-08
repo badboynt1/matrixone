@@ -80,8 +80,8 @@ import (
 const (
 	DistributedThreshold              uint64 = 10 * mpool.MB
 	SingleLineSizeEstimate            uint64 = 300 * mpool.B
-	shuffleJoinMergeChannelBufferSize        = 0
-	shuffleJoinProbeChannelBufferSize        = 0
+	shuffleJoinMergeChannelBufferSize        = 4
+	shuffleJoinProbeChannelBufferSize        = 16
 )
 
 var (
