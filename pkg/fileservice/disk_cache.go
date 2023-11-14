@@ -386,7 +386,7 @@ func (d *DiskCache) evict(ctx context.Context) {
 
 		var size int64
 		if sys, ok := info.Sys().(*syscall.Stat_t); ok {
-			size = int64(sys.Blocks) * int64(sys.Blksize)
+			size = int64(sys.Blocks) * 512
 		} else {
 			size = info.Size()
 		}
