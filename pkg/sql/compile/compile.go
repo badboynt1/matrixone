@@ -279,7 +279,8 @@ func (c *Compile) run(s *Scope) error {
 		return nil
 	}
 
-	//fmt.Println(DebugShowScopes([]*Scope{s}))
+	fmt.Println("pipeline in run()")
+	fmt.Println(DebugShowScopes([]*Scope{s}))
 
 	switch s.Magic {
 	case Normal:
@@ -782,6 +783,10 @@ func (c *Compile) compileQuery(ctx context.Context, qry *plan.Query) ([]*Scope, 
 		}
 		steps = append(steps, scope)
 	}
+
+	fmt.Println("pipeline in compile()")
+	fmt.Println(DebugShowScopes(steps))
+
 	return steps, err
 }
 
@@ -3758,6 +3763,7 @@ func shuffleBlocksToMultiCN(c *Compile, ranges [][]byte, rel engine.Relation, n 
 			return nil, err
 		}
 	} else {
+		logutil.Infof("tablename %v go hash shuffle", n.TableDef.Name)
 		shuffleBlocksByHash(c, newRanges, nodes)
 	}
 
@@ -3838,6 +3844,9 @@ func shuffleBlocksByRange(c *Compile, ranges [][]byte, n *plan.Node, nodes engin
 		}
 		nodes[index].Data = append(nodes[index].Data, blk)
 	}
+	for i := range nodes {
+		logutil.Infof("!!!!!!!!  tablename %v ,nodes[%v] payload %v, shuffle range: %v  %v", n.TableDef.Name, i, len(nodes[i].Data), shuffleRangeInt64, shuffleRangeUint64)
+	}
 	return nil
 }
 
@@ -3912,17 +3921,7 @@ func isLaunchMode(cnlist engine.Nodes) bool {
 
 func isSameCN(addr string, currentCNAddr string) bool {
 	// just a defensive judgment. In fact, we shouldn't have received such data.
-	parts1 := strings.Split(addr, ":")
-	if len(parts1) != 2 {
-		logutil.Debugf("compileScope received a malformed cn address '%s', expected 'ip:port'", addr)
-		return true
-	}
-	parts2 := strings.Split(currentCNAddr, ":")
-	if len(parts2) != 2 {
-		logutil.Debugf("compileScope received a malformed current-cn address '%s', expected 'ip:port'", currentCNAddr)
-		return true
-	}
-	return parts1[0] == parts2[0]
+	return addr == currentCNAddr
 }
 
 func (s *Scope) affectedRows() uint64 {
