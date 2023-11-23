@@ -3835,6 +3835,8 @@ func shuffleBlocksByRange(c *Compile, ranges [][]byte, n *plan.Node, nodes engin
 				shuffleRangeUint64 = plan2.ShuffleRangeReEvalUnsigned(n.Stats.HashmapStats.Ranges, len(c.cnList), n.Stats.HashmapStats.Nullcnt, int64(n.Stats.TableCnt))
 			}
 		}
+		shuffleRangeUint64 = nil
+		shuffleRangeInt64 = nil
 		if shuffleRangeUint64 != nil {
 			index = plan2.GetRangeShuffleIndexForZMUnsignedSlice(shuffleRangeUint64, zm)
 		} else if shuffleRangeInt64 != nil {
