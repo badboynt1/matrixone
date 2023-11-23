@@ -3838,6 +3838,9 @@ func shuffleBlocksByRange(c *Compile, ranges [][]byte, n *plan.Node, nodes engin
 		}
 		nodes[index].Data = append(nodes[index].Data, blk)
 	}
+	for i := range nodes {
+		logutil.Infof("nodes[%v] payload %v", i, len(nodes[i].Data))
+	}
 	return nil
 }
 
