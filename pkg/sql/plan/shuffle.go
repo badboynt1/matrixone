@@ -15,7 +15,9 @@
 package plan
 
 import (
+	"github.com/matrixorigin/matrixone/pkg/catalog"
 	"github.com/matrixorigin/matrixone/pkg/logutil"
+	"github.com/matrixorigin/matrixone/pkg/sql/util"
 	"math/bits"
 	"unsafe"
 
@@ -432,26 +434,35 @@ func GetShuffleDop() (dop int) {
 func determinShuffleForScan(n *plan.Node, builder *QueryBuilder) {
 	n.Stats.HashmapStats.Shuffle = true
 	n.Stats.HashmapStats.ShuffleType = plan.ShuffleType_Hash
-	if n.TableDef.Pkey != nil {
-		firstColName := n.TableDef.Pkey.Names[0]
-		firstColID := n.TableDef.Name2ColIndex[firstColName]
-		s := getStatsInfoByTableID(n.TableDef.TblId, builder)
-		if s == nil {
-			return
+	var firstSortColName string
+	if n.TableDef.ClusterBy != nil {
+		firstSortColName = util.GetClusterByFirstColumn(n.TableDef.ClusterBy.Name)
+	} else if n.TableDef.Pkey != nil {
+		firstSortColName = n.TableDef.Pkey.Names[0]
+		if firstSortColName == catalog.FakePrimaryKeyColName {
+			firstSortColName = ""
 		}
-		if s.NdvMap[firstColName] < ShuffleThreshHoldOfNDV {
-			return
-		}
-		switch types.T(n.TableDef.Cols[firstColID].Typ.Id) {
-		case types.T_int64, types.T_int32, types.T_int16, types.T_uint64, types.T_uint32, types.T_uint16, types.T_char, types.T_varchar, types.T_text:
-			logutil.Infof("tablename %v go range shuffle, pkname %v", n.TableDef.Name, n.TableDef.Pkey.Names)
-			n.Stats.HashmapStats.ShuffleType = plan.ShuffleType_Range
-			n.Stats.HashmapStats.ShuffleColIdx = int32(n.TableDef.Cols[firstColID].Seqnum)
-			n.Stats.HashmapStats.ShuffleColMin = int64(s.MinValMap[firstColName])
-			n.Stats.HashmapStats.ShuffleColMax = int64(s.MaxValMap[firstColName])
-			n.Stats.HashmapStats.Ranges = shouldUseShuffleRange(s.ShuffleRangeMap[firstColName])
-			n.Stats.HashmapStats.Nullcnt = s.NullCntMap[firstColName]
-		}
+	}
+	if len(firstSortColName) == 0 {
+		return
+	}
+	firstSortColID := n.TableDef.Name2ColIndex[firstSortColName]
+	s := getStatsInfoByTableID(n.TableDef.TblId, builder)
+	if s == nil {
+		return
+	}
+	if s.NdvMap[firstSortColName] < ShuffleThreshHoldOfNDV {
+		return
+	}
+	switch types.T(n.TableDef.Cols[firstSortColID].Typ.Id) {
+	case types.T_int64, types.T_int32, types.T_int16, types.T_uint64, types.T_uint32, types.T_uint16, types.T_char, types.T_varchar, types.T_text:
+		logutil.Infof("tablename %v go range shuffle, pkname %v, firstColName %v", n.TableDef.Name, n.TableDef.Pkey.Names, firstSortColName)
+		n.Stats.HashmapStats.ShuffleType = plan.ShuffleType_Range
+		n.Stats.HashmapStats.ShuffleColIdx = int32(n.TableDef.Cols[firstSortColID].Seqnum)
+		n.Stats.HashmapStats.ShuffleColMin = int64(s.MinValMap[firstSortColName])
+		n.Stats.HashmapStats.ShuffleColMax = int64(s.MaxValMap[firstSortColName])
+		n.Stats.HashmapStats.Ranges = shouldUseShuffleRange(s.ShuffleRangeMap[firstSortColName])
+		n.Stats.HashmapStats.Nullcnt = s.NullCntMap[firstSortColName]
 	}
 }
 
