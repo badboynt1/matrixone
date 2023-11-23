@@ -3758,6 +3758,7 @@ func shuffleBlocksToMultiCN(c *Compile, ranges [][]byte, rel engine.Relation, n 
 			return nil, err
 		}
 	} else {
+		logutil.Infof("tablename %v go hash shuffle", n.TableDef.Name)
 		shuffleBlocksByHash(c, newRanges, nodes)
 	}
 
@@ -3839,7 +3840,7 @@ func shuffleBlocksByRange(c *Compile, ranges [][]byte, n *plan.Node, nodes engin
 		nodes[index].Data = append(nodes[index].Data, blk)
 	}
 	for i := range nodes {
-		logutil.Infof("nodes[%v] payload %v", i, len(nodes[i].Data))
+		logutil.Infof("tablename %v ,nodes[%v] payload %v, shuffle range: %v", n.TableDef.Name, i, len(nodes[i].Data))
 	}
 	return nil
 }

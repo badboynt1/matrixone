@@ -15,6 +15,7 @@
 package plan
 
 import (
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"math/bits"
 	"unsafe"
 
@@ -443,6 +444,7 @@ func determinShuffleForScan(n *plan.Node, builder *QueryBuilder) {
 		}
 		switch types.T(n.TableDef.Cols[firstColID].Typ.Id) {
 		case types.T_int64, types.T_int32, types.T_int16, types.T_uint64, types.T_uint32, types.T_uint16, types.T_char, types.T_varchar, types.T_text:
+			logutil.Infof("tablename %v go range shuffle", n.TableDef.Name)
 			n.Stats.HashmapStats.ShuffleType = plan.ShuffleType_Range
 			n.Stats.HashmapStats.ShuffleColIdx = int32(n.TableDef.Cols[firstColID].Seqnum)
 			n.Stats.HashmapStats.ShuffleColMin = int64(s.MinValMap[firstColName])
