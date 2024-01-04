@@ -61,6 +61,10 @@ func (s *StorageTxnClient) New(
 	}, nil
 }
 
+func (s *StorageTxnClient) GetState() client.TxnState {
+	panic("unimplemented")
+}
+
 func (s *StorageTxnClient) IterTxns(func(client.TxnOverview) bool) {
 	panic("unimplemented")
 }
@@ -119,6 +123,14 @@ func (s *StorageTxnOperator) ResetRetry(retry bool) {
 }
 
 func (s *StorageTxnOperator) IsRetry() bool {
+	panic("unimplemented")
+}
+
+func (s *StorageTxnOperator) SetOpenLog(retry bool) {
+	panic("unimplemented")
+}
+
+func (s *StorageTxnOperator) IsOpenLog() bool {
 	panic("unimplemented")
 }
 
@@ -202,6 +214,10 @@ func (s *StorageTxnOperator) SnapshotTS() timestamp.Timestamp {
 }
 
 func (s *StorageTxnOperator) Status() txn.TxnStatus {
+	panic("unimplemented")
+}
+
+func (s *StorageTxnOperator) PKDedupCount() int {
 	panic("unimplemented")
 }
 
@@ -289,5 +305,9 @@ func (s *StorageTxnOperator) RemoveWaitLock(key uint64) {
 }
 
 func (s *StorageTxnOperator) GetOverview() client.TxnOverview {
+	panic("should not call")
+}
+
+func (s *StorageTxnOperator) LockSkipped(tableID uint64, mode lock.LockMode) bool {
 	panic("should not call")
 }

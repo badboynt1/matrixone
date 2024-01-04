@@ -15,11 +15,18 @@
 package plan
 
 import (
+	"time"
+
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
 	"github.com/matrixorigin/matrixone/pkg/sql/parsers/tree"
+	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
 )
 
 func buildDelete(stmt *tree.Delete, ctx CompilerContext, isPrepareStmt bool) (*Plan, error) {
+	start := time.Now()
+	defer func() {
+		v2.TxnStatementBuildDeleteHistogram.Observe(time.Since(start).Seconds())
+	}()
 	aliasMap := make(map[string][2]string)
 	for _, tbl := range stmt.TableRefs {
 		getAliasToName(ctx, tbl, "", aliasMap)
@@ -71,6 +78,20 @@ func buildDelete(stmt *tree.Delete, ctx CompilerContext, isPrepareStmt bool) (*P
 		delPlanCtx.allDelTableIDs = allDelTableIDs
 		delPlanCtx.lockTable = needLockTable
 		delPlanCtx.isDeleteWithoutFilters = isDeleteWithoutFilters
+
+		if tableDef.Partition != nil {
+			partTableIds := make([]uint64, tableDef.Partition.PartitionNum)
+			partTableNames := make([]string, tableDef.Partition.PartitionNum)
+			for j, partition := range tableDef.Partition.Partitions {
+				_, partTableDef := ctx.Resolve(tblInfo.objRef[i].SchemaName, partition.PartitionTableName)
+				partTableIds[j] = partTableDef.TblId
+				partTableNames[j] = partition.PartitionTableName
+			}
+			delPlanCtx.partitionInfos[tableDef.TblId] = &partSubTableInfo{
+				partTableIDs:   partTableIds,
+				partTableNames: partTableNames,
+			}
+		}
 
 		lastNodeId = appendSinkScanNode(builder, deleteBindCtx, sourceStep)
 		lastNodeId, err = makePreUpdateDeletePlan(ctx, builder, deleteBindCtx, delPlanCtx, lastNodeId)

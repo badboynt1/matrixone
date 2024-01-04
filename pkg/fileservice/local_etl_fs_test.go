@@ -118,3 +118,26 @@ func TestLocalETLFS(t *testing.T) {
 	})
 
 }
+
+func TestLocalETLFSEmptyRootPath(t *testing.T) {
+	fs, err := NewLocalETLFS(
+		"test",
+		"",
+	)
+	assert.Nil(t, err)
+	assert.NotNil(t, fs)
+}
+
+func TestLocalETLFSWithBadSymlink(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	err := os.Symlink(
+		"file-not-exists-fdsafdsafdsa",
+		filepath.Join(dir, "foo"),
+	)
+	assert.Nil(t, err)
+	fs, err := NewLocalETLFS("test", dir)
+	assert.Nil(t, err)
+	_, err = fs.List(ctx, "")
+	assert.Nil(t, err)
+}

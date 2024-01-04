@@ -18,9 +18,20 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 )
+
+type CacheResponse struct {
+	Response
+	ReleaseFunc func()
+}
+
+func (r *CacheResponse) Reset() {
+	if r.ReleaseFunc != nil {
+		r.ReleaseFunc()
+	}
+	r.Response.Reset()
+}
 
 // SetID implements the morpc.Message interface.
 func (m *Request) SetID(id uint64) {
@@ -30,6 +41,10 @@ func (m *Request) SetID(id uint64) {
 // GetID implements the morpc.Message interface.
 func (m *Request) GetID() uint64 {
 	return m.RequestID
+}
+
+func (m *Request) GetMethod() CmdMethod {
+	return m.GetCmdMethod()
 }
 
 // Method implements the morpc.MethodBasedMessage interface.

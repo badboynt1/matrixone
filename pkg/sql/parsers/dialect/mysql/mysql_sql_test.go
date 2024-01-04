@@ -27,8 +27,8 @@ var (
 		input  string
 		output string
 	}{
-		input:  "select (col + col) / 2",
-		output: "select (col + col) / 2",
+		input:  "create account 0b6d35cc_11ab_4da5_a5c5_c4c09917c11 admin_name='admin' identified by '123456';",
+		output: "create account 0b6d35cc_11ab_4da5_a5c5_c4c09917c11 admin_name 'admin' identified by '******'",
 	}
 )
 
@@ -78,11 +78,17 @@ var (
 		input  string
 		output string
 	}{{
+		input:  "create account 0b6d35cc_11ab_4da5_a5c5_c4c09917c11 admin_name='admin' identified by '123456';",
+		output: "create account 0b6d35cc_11ab_4da5_a5c5_c4c09917c11 admin_name 'admin' identified by '******'",
+	}, {
+		input:  "select enable from t1;",
+		output: "select enable from t1",
+	}, {
 		input:  "select _wstart(ts), _wend(ts), max(temperature), min(temperature) from sensor_data where ts > \"2023-08-01 00:00:00.000\" and ts < \"2023-08-01 00:50:00.000\" interval(ts, 10, minute) sliding(5, minute) fill(prev);",
 		output: "select _wstart(ts), _wend(ts), max(temperature), min(temperature) from sensor_data where ts > 2023-08-01 00:00:00.000 and ts < 2023-08-01 00:50:00.000 interval(ts, 10, minute) sliding(5, minute) fill(prev)",
 	}, {
 		input:  "select cluster_centers(a) from t1;",
-		output: "select cluster_centers(a, 1,vector_cosine_ops) from t1",
+		output: "select cluster_centers(a, 1,vector_l2_ops,random) from t1",
 	}, {
 		input:  "select cluster_centers(a spherical_kmeans '5') from t1;",
 		output: "select cluster_centers(a, 5) from t1",
@@ -93,6 +99,15 @@ var (
 		input:  "select cluster_centers(a spherical_kmeans '5,vector_cosine_ops') from t1;",
 		output: "select cluster_centers(a, 5,vector_cosine_ops) from t1",
 	}, {
+		input:  "select cluster_centers(a spherical_kmeans '5,vector_cosine_ops,kmeansplusplus') from t1;",
+		output: "select cluster_centers(a, 5,vector_cosine_ops,kmeansplusplus) from t1",
+	}, {
+		input:  "select cluster_centers(a spherical_kmeans '5,vector_cosine_ops,random') from t1;",
+		output: "select cluster_centers(a, 5,vector_cosine_ops,random) from t1",
+	}, {
+		input:  "alter table t1 alter reindex idx1 IVFFLAT lists = 5",
+		output: "alter table t1 alter reindex idx1 ivfflat lists = 5",
+	}, {
 		input:  "create connector for s with (\"type\"='kafka', \"topic\"= 'user', \"partition\" = '1', \"value\"= 'json', \"bootstrap.servers\" = '127.0.0.1:62610');",
 		output: "create connector for s with (type = kafka, topic = user, partition = 1, value = json, bootstrap.servers = 127.0.0.1:62610)",
 	}, {
@@ -102,26 +117,20 @@ var (
 		input:  "create connector for s with (\"type\"='kafkamo', \"topic\"= 'user', \"partion\" = '1', \"value\"= 'json', \"bootstrap.servers\" = '127.0.0.1:62610');",
 		output: "create connector for s with (type = kafkamo, topic = user, partion = 1, value = json, bootstrap.servers = 127.0.0.1:62610)",
 	}, {
-		input:  "create stream s(a varchar, b varchar) with (\"type\"='kafka', \"topic\"= 'user', \"partion\" = '1', \"value\"= 'json', \"bootstrap.servers\" = '127.0.0.1:62610');",
-		output: "create stream s (a varchar, b varchar) with (type = kafka, topic = user, partion = 1, value = json, bootstrap.servers = 127.0.0.1:62610)",
+		input:  "create source s(a varchar, b varchar) with (\"type\"='kafka', \"topic\"= 'user', \"partion\" = '1', \"value\"= 'json', \"bootstrap.servers\" = '127.0.0.1:62610');",
+		output: "create source s (a varchar, b varchar) with (type = kafka, topic = user, partion = 1, value = json, bootstrap.servers = 127.0.0.1:62610)",
 	}, {
-		input:  "drop stream if exists s",
+		input:  "drop source if exists s",
 		output: "drop table if exists s",
 	}, {
-		input:  "CREATE STREAM enriched WITH (\n    VALUE_SCHEMA_ID = 1\n  ) AS\n  SELECT\n     cs.*,\n     u.name,\n     u.classification,\n     u.level\n  FROM clickstream cs\n    JOIN users u ON u.id = cs.userId",
-		output: "create stream enriched with (value_schema_id = 1) as select cs.*, u.name, u.classification, u.level from clickstream as cs inner join users as u on u.id = cs.userid",
+		input:  "CREATE source pageviews (\n    page_id BIGINT KEY\n  ) WITH (\n    KAFKA_TOPIC = 'keyed-pageviews-topic',\n    VALUE_FORMAT = 'JSON_SR',\n    VALUE_SCHEMA_ID = 2\n  );",
+		output: "create source pageviews (page_id bigint key) with (kafka_topic = keyed-pageviews-topic, value_format = JSON_SR, value_schema_id = 2)",
 	}, {
-		input:  "CREATE STREAM filtered AS\n   SELECT \n     a, \n     few,\n     columns \n   FROM source_stream",
-		output: "create stream filtered as select a, few, columns from source_stream",
+		input:  "CREATE source pageviews (\n    viewtime BIGINT,\n    user_id VARCHAR\n  ) WITH (\n    KAFKA_TOPIC = 'keyless-pageviews-topic',\n    KEY_FORMAT = 'AVRO',\n    KEY_SCHEMA_ID = 1,\n    VALUE_FORMAT = 'JSON_SR'\n  );",
+		output: "create source pageviews (viewtime bigint, user_id varchar) with (kafka_topic = keyless-pageviews-topic, key_format = AVRO, key_schema_id = 1, value_format = JSON_SR)",
 	}, {
-		input:  "CREATE STREAM pageviews (\n    page_id BIGINT KEY\n  ) WITH (\n    KAFKA_TOPIC = 'keyed-pageviews-topic',\n    VALUE_FORMAT = 'JSON_SR',\n    VALUE_SCHEMA_ID = 2\n  );",
-		output: "create stream pageviews (page_id bigint key) with (kafka_topic = keyed-pageviews-topic, value_format = JSON_SR, value_schema_id = 2)",
-	}, {
-		input:  "CREATE STREAM pageviews (\n    viewtime BIGINT,\n    user_id VARCHAR\n  ) WITH (\n    KAFKA_TOPIC = 'keyless-pageviews-topic',\n    KEY_FORMAT = 'AVRO',\n    KEY_SCHEMA_ID = 1,\n    VALUE_FORMAT = 'JSON_SR'\n  );",
-		output: "create stream pageviews (viewtime bigint, user_id varchar) with (kafka_topic = keyless-pageviews-topic, key_format = AVRO, key_schema_id = 1, value_format = JSON_SR)",
-	}, {
-		input:  "CREATE STREAM pageviews (page_id BIGINT, viewtime BIGINT, user_id VARCHAR) WITH (\n    KAFKA_TOPIC = 'keyless-pageviews-topic',\n    VALUE_FORMAT = 'JSON'\n  )",
-		output: "create stream pageviews (page_id bigint, viewtime bigint, user_id varchar) with (kafka_topic = keyless-pageviews-topic, value_format = JSON)",
+		input:  "CREATE source pageviews (page_id BIGINT, viewtime BIGINT, user_id VARCHAR) WITH (\n    KAFKA_TOPIC = 'keyless-pageviews-topic',\n    VALUE_FORMAT = 'JSON'\n  )",
+		output: "create source pageviews (page_id bigint, viewtime bigint, user_id varchar) with (kafka_topic = keyless-pageviews-topic, value_format = JSON)",
 	}, {
 		input:  "select row_number() over (partition by col1, col2 order by col3 desc range unbounded preceding) from t1",
 		output: "select row_number() over (partition by col1, col2 order by col3 desc range unbounded preceding) from t1",
@@ -558,6 +567,9 @@ var (
 		input:  "SELECT sum(a) as 'hello' from t1;",
 		output: "select sum(a) as hello from t1",
 	}, {
+		input:  "select stream from t1;",
+		output: "select stream from t1",
+	}, {
 		input:  "SELECT DATE_ADD(\"2017-06-15\", INTERVAL -10 MONTH);",
 		output: "select date_add(2017-06-15, interval(-10, month))",
 	}, {
@@ -734,6 +746,12 @@ var (
 		output: "create table t (a int, b char, constraint p1 primary key idx using none (a, b))",
 	}, {
 		input: "create table t (a int, b char, primary key idx (a, b))",
+	}, {
+		input:  "create dynamic table t as select a from t1",
+		output: "create dynamic table t as select a from t1",
+	}, {
+		input:  "create dynamic table t as select a from t1 with (\"type\"='kafka')",
+		output: "create dynamic table t as select a from t1 with (type = kafka)",
 	}, {
 		input:  "create external table t (a int) infile 'data.txt'",
 		output: "create external table t (a int) infile 'data.txt'",
@@ -1408,8 +1426,8 @@ var (
 			input:  "create index idx using ivfflat on A (a) LISTS 10",
 			output: "create index idx using ivfflat on a (a) LISTS 10 ",
 		}, {
-			input:  "create index idx using ivfflat on A (a) LISTS 10 similarity_function 'IP'",
-			output: "create index idx using ivfflat on a (a) LISTS 10 SIMILARITY_FUNCTION IP ",
+			input:  "create index idx using ivfflat on A (a) LISTS 10 op_type 'vector_l2_ops'",
+			output: "create index idx using ivfflat on a (a) LISTS 10 OP_TYPE vector_l2_ops ",
 		}, {
 			input: "create index idx1 on a (a)",
 		}, {
@@ -2293,6 +2311,38 @@ var (
 			input: "alter table t1 drop column a, drop column b",
 		},
 		{
+			input:  "ALTER TABLE employees ADD PARTITION (PARTITION p05 VALUES LESS THAN (500001))",
+			output: "alter table employees add partition (partition p05 values less than (500001))",
+		},
+		{
+			input:  "alter table t add partition (partition p4 values in (7), partition p5 values in (8, 9))",
+			output: "alter table t add partition (partition p4 values in (7), partition p5 values in (8, 9))",
+		},
+		{
+			input:  "ALTER TABLE t1 DROP PARTITION p1",
+			output: "alter table t1 drop partition p1",
+		},
+		{
+			input:  "ALTER TABLE t1 DROP PARTITION p0, p1",
+			output: "alter table t1 drop partition p0, p1",
+		},
+		{
+			input:  "ALTER TABLE t1 TRUNCATE PARTITION p0",
+			output: "alter table t1 truncate partition p0",
+		},
+		{
+			input:  "ALTER TABLE t1 TRUNCATE PARTITION p0, p3",
+			output: "alter table t1 truncate partition p0, p3",
+		},
+		{
+			input:  "ALTER TABLE t1 TRUNCATE PARTITION ALL",
+			output: "alter table t1 truncate partition all",
+		},
+		{
+			input:  "ALTER TABLE titles partition by range(to_days(from_date)) (partition p01 values less than (to_days('1985-12-31')), partition p02 values less than (to_days('1986-12-31')), partition p03 values less than (to_days('1987-12-31')))",
+			output: "alter table titles partition by range(to_days(from_date)) (partition p01 values less than (to_days(1985-12-31)), partition p02 values less than (to_days(1986-12-31)), partition p03 values less than (to_days(1987-12-31)))",
+		},
+		{
 			input: "create publication pub1 database db1",
 		},
 		{
@@ -2818,6 +2868,9 @@ var (
 		},
 		{
 			input: "create table t (a int, b char, constraint index idx(a, b) )",
+		},
+		{
+			input: "ALTER TABLE t1 TRUNCATE PARTITION ALL, p0",
 		},
 	}
 )

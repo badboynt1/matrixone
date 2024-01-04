@@ -221,6 +221,14 @@ type Config struct {
 		// MaxActive is the count of max active txn in current cn.  If reached max value, the txn
 		// is added to a FIFO queue. Default is unlimited.
 		MaxActive int `toml:"max-active"`
+		// NormalStateNoWait is the config to control if it waits for the transaction client
+		// to be normal state. If the value is false, it waits until the transaction client to be
+		// normal state; if the value is true, it does not wait and just return an error to the
+		// client. Default value is false.
+		NormalStateNoWait bool `toml:"normal-state-no-wait"`
+		//PKDedupCount check whether primary key in transaction's workspace is duplicated if the count of pk
+		// is less than PKDedupCount when txn commits. Default value is 0 , which means don't do deduplication.
+		PkDedupCount int `toml:"pk-dedup-count"`
 	} `toml:"txn"`
 
 	// AutoIncrement auto increment config
@@ -493,6 +501,7 @@ func (c *Config) SetDefaultValue() {
 	if c.Txn.MaxActive == 0 {
 		c.Txn.MaxActive = runtime.NumCPU() * 4
 	}
+	c.Txn.NormalStateNoWait = false
 	c.LockService.ServiceID = "temp"
 	c.LockService.Validate()
 	c.LockService.ServiceID = c.UUID

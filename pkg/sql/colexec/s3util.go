@@ -56,7 +56,6 @@ type S3Writer struct {
 	lengths []uint64
 
 	// the third vector only has several rows, not aligns with the other two vectors.
-	// the third vector stores some object stats(one object), all blocks, stored in the second vector, belong to that object.
 	blockInfoBat *batch.Batch
 
 	// An intermediate cache after the merge sort of all `Bats` data
@@ -248,16 +247,14 @@ func (w *S3Writer) ResetBlockInfoBat(proc *process.Process) {
 	// vecs[0] to mark which table this metaLoc belongs to: [0] means insertTable itself, [1] means the first uniqueIndex table, [2] means the second uniqueIndex table and so on
 	// vecs[1] store relative block metadata
 	if w.blockInfoBat != nil {
-		w.blockInfoBat.Clean(proc.GetMPool())
+		proc.PutBatch(w.blockInfoBat)
 	}
 	attrs := []string{catalog.BlockMeta_TableIdx_Insert, catalog.BlockMeta_BlockInfo, catalog.ObjectMeta_ObjectStats}
 	blockInfoBat := batch.NewWithSize(len(attrs))
 	blockInfoBat.Attrs = attrs
 	blockInfoBat.Vecs[0] = proc.GetVector(types.T_int16.ToType())
 	blockInfoBat.Vecs[1] = proc.GetVector(types.T_text.ToType())
-
-	blockInfoBat.Vecs[2] = vector.NewConstBytes(types.T_binary.ToType(),
-		objectio.ZeroObjectStats.Marshal(), 1, proc.GetMPool())
+	blockInfoBat.Vecs[2] = proc.GetVector(types.T_binary.ToType())
 
 	w.blockInfoBat = blockInfoBat
 }
@@ -276,6 +273,7 @@ func (w *S3Writer) Output(proc *process.Process, result *vm.CallResult) error {
 	for i := range w.blockInfoBat.Attrs {
 		vec := proc.GetVector(*w.blockInfoBat.Vecs[i].GetType())
 		if err := vec.UnionBatch(w.blockInfoBat.Vecs[i], 0, w.blockInfoBat.Vecs[i].Length(), nil, proc.GetMPool()); err != nil {
+			vec.Free(proc.Mp())
 			return err
 		}
 		bat.SetVector(int32(i), vec)
@@ -374,11 +372,13 @@ func (w *S3Writer) Put(bat *batch.Batch, proc *process.Process) bool {
 		if left := int(options.DefaultBlockMaxRows) - rbat.RowCount(); rows > left {
 			rows = left
 		}
+
+		var err error
 		for i := 0; i < bat.VectorCount(); i++ {
 			vec := rbat.GetVector(int32(i))
 			srcVec := bat.GetVector(int32(i))
 			for j := 0; j < rows; j++ {
-				if err := w.ufs[i](vec, srcVec, int64(j+start)); err != nil {
+				if err = w.ufs[i](vec, srcVec, int64(j+start)); err != nil {
 					panic(err)
 				}
 			}
@@ -621,6 +621,9 @@ func (w *S3Writer) WriteBlock(bat *batch.Batch, dataType ...objectio.DataMetaTyp
 		pkIdx := uint16(w.pk)
 		w.writer.SetPrimaryKey(pkIdx)
 	}
+	if w.sortIndex > -1 {
+		w.writer.SetSortKey(uint16(w.sortIndex))
+	}
 	if w.attrs == nil {
 		w.attrs = bat.Attrs
 	}
@@ -675,8 +678,9 @@ func (w *S3Writer) writeEndBlocks(proc *process.Process) error {
 		if stats[idx].IsZero() {
 			continue
 		}
-		if err = vector.SetConstBytes(w.blockInfoBat.Vecs[2], stats[idx].Marshal(),
-			1, proc.GetMPool()); err != nil {
+
+		if err = vector.AppendBytes(w.blockInfoBat.Vecs[2],
+			stats[idx].Marshal(), false, proc.GetMPool()); err != nil {
 			return err
 		}
 	}

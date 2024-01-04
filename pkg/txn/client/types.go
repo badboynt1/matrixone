@@ -66,6 +66,21 @@ type TxnClient interface {
 
 	// IterTxns iter all txns
 	IterTxns(func(TxnOverview) bool)
+
+	// GetState returns the current state of txn client.
+	GetState() TxnState
+}
+
+type TxnState struct {
+	State int
+	// user active txns
+	Users int
+	// all active txns
+	ActiveTxns []string
+	// FIFO queue for ready to active txn
+	WaitActiveTxns []string
+	// LatestTS is the latest timestamp of the txn client.
+	LatestTS timestamp.Timestamp
 }
 
 // TxnOperator operator for transaction clients, handling read and write
@@ -131,6 +146,8 @@ type TxnOperator interface {
 	AddWaitLock(tableID uint64, rows [][]byte, opt lock.LockOptions) uint64
 	// RemoveWaitLock remove wait lock for current txn
 	RemoveWaitLock(key uint64)
+	// LockSkipped return true if lock need skipped.
+	LockSkipped(tableID uint64, mode lock.LockMode) bool
 
 	// AddWorkspace for the transaction
 	AddWorkspace(workspace Workspace)
@@ -140,6 +157,9 @@ type TxnOperator interface {
 	ResetRetry(bool)
 	IsRetry() bool
 
+	SetOpenLog(bool)
+	IsOpenLog() bool
+
 	// AppendEventCallback append callback. All append callbacks will be called sequentially
 	// if event happen.
 	AppendEventCallback(event EventType, callbacks ...func(txn.TxnMeta))
@@ -147,6 +167,8 @@ type TxnOperator interface {
 	// Debug send debug request to DN, after use, SendResult needs to call the Release
 	// method.
 	Debug(ctx context.Context, ops []txn.TxnRequest) (*rpc.SendResult, error)
+
+	PKDedupCount() int
 }
 
 // TxnIDGenerator txn id generator
@@ -190,6 +212,8 @@ type TimestampWaiter interface {
 	CancelC() chan struct{}
 	// Close close the timestamp waiter
 	Close()
+	// LatestTS returns the latest timestamp of the waiter.
+	LatestTS() timestamp.Timestamp
 }
 
 type Workspace interface {

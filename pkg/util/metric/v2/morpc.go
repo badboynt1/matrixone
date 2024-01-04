@@ -58,6 +58,14 @@ var (
 			Name:      "backend_connect_total",
 			Help:      "Total number of morpc backend connect.",
 		}, []string{"name", "type"})
+
+	rpcNetworkBytesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "mo",
+			Subsystem: "rpc",
+			Name:      "network_bytes_total",
+			Help:      "Total bytes of rpc network transfer.",
+		}, []string{"type"})
 )
 
 var (
@@ -101,7 +109,7 @@ var (
 			Subsystem: "rpc",
 			Name:      "backend_connect_duration_seconds",
 			Help:      "Bucketed histogram of write data into socket duration.",
-			Buckets:   prometheus.ExponentialBuckets(0.00001, 2.0, 20),
+			Buckets:   getDurationBuckets(),
 		}, []string{"name"})
 
 	rpcWriteDurationHistogram = prometheus.NewHistogramVec(
@@ -110,7 +118,7 @@ var (
 			Subsystem: "rpc",
 			Name:      "write_duration_seconds",
 			Help:      "Bucketed histogram of write data into socket duration.",
-			Buckets:   prometheus.ExponentialBuckets(0.00001, 2.0, 20),
+			Buckets:   getDurationBuckets(),
 		}, []string{"name", "side"})
 
 	rpcWriteLatencyDurationHistogram = prometheus.NewHistogramVec(
@@ -119,7 +127,7 @@ var (
 			Subsystem: "rpc",
 			Name:      "write_latency_duration_seconds",
 			Help:      "Bucketed histogram of write latency duration.",
-			Buckets:   prometheus.ExponentialBuckets(0.00001, 2.0, 20),
+			Buckets:   getDurationBuckets(),
 		}, []string{"name", "side"})
 
 	rpcBackendDoneDurationHistogram = prometheus.NewHistogramVec(
@@ -128,7 +136,7 @@ var (
 			Subsystem: "rpc",
 			Name:      "backend_done_duration_seconds",
 			Help:      "Bucketed histogram of request done duration.",
-			Buckets:   prometheus.ExponentialBuckets(0.00001, 2.0, 20),
+			Buckets:   getDurationBuckets(),
 		}, []string{"name"})
 )
 
@@ -202,4 +210,12 @@ func NewRPCBackendDoneDurationHistogramByName(name string) prometheus.Observer {
 
 func NewRPCServerSessionSizeGaugeByName(name string) prometheus.Gauge {
 	return rpcServerSessionSizeGauge.WithLabelValues(name)
+}
+
+func NewRPCInputCounter() prometheus.Counter {
+	return rpcNetworkBytesCounter.WithLabelValues("input")
+}
+
+func NewRPCOutputCounter() prometheus.Counter {
+	return rpcNetworkBytesCounter.WithLabelValues("output")
 }

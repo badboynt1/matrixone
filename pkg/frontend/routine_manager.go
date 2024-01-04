@@ -24,6 +24,7 @@ import (
 	"math"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fagongzi/goetty/v2"
@@ -33,6 +34,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/queryservice"
 	"github.com/matrixorigin/matrixone/pkg/util/metric"
+	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
 	"github.com/matrixorigin/matrixone/pkg/util/trace"
 	"go.uber.org/zap"
 )
@@ -47,6 +49,8 @@ type RoutineManager struct {
 	accountRoutine *AccountRoutineManager
 	baseService    BaseService
 	sessionManager *queryservice.SessionManager
+	// reportSystemStatusTime is the time when report system status last time.
+	reportSystemStatusTime atomic.Pointer[time.Time]
 }
 
 type AccountRoutineManager struct {
@@ -254,6 +258,12 @@ func (rm *RoutineManager) Created(rs goetty.IOSession) {
 	ses.setRoutineManager(rm)
 	ses.setRoutine(routine)
 
+	ses.timestampMap[TSCreatedStart] = time.Now()
+	defer func() {
+		ses.timestampMap[TSCreatedEnd] = time.Now()
+		v2.CreatedDurationHistogram.Observe(ses.timestampMap[TSCreatedEnd].Sub(ses.timestampMap[TSCreatedStart]).Seconds())
+	}()
+
 	routine.setSession(ses)
 	pro.SetSession(ses)
 
@@ -386,6 +396,7 @@ func (rm *RoutineManager) Handler(rs goetty.IOSession, msg interface{}, received
 		return err
 	}
 
+	ses := routine.getSession()
 	length := packet.Length
 	payload := packet.Payload
 	for uint32(length) == MaxPayloadSize {
@@ -414,13 +425,13 @@ func (rm *RoutineManager) Handler(rs goetty.IOSession, msg interface{}, received
 
 	// finish handshake process
 	if !protocol.IsEstablished() {
+		ses.timestampMap[TSEstablishStart] = time.Now()
 		logDebugf(protoInfo, "HANDLE HANDSHAKE")
 
 		/*
 			di := MakeDebugInfo(payload,80,8)
 			logutil.Infof("RP[%v] Payload80[%v]",rs.RemoteAddr(),di)
 		*/
-		ses := routine.getSession()
 		if protocol.GetCapability()&CLIENT_SSL != 0 && !protocol.IsTlsEstablished() {
 			logDebugf(protoInfo, "setup ssl")
 			isTlsHeader, err = protocol.HandleHandshake(ctx, payload)
@@ -431,6 +442,7 @@ func (rm *RoutineManager) Handler(rs goetty.IOSession, msg interface{}, received
 				return err
 			}
 			if isTlsHeader {
+				ses.timestampMap[TSUpgradeTLSStart] = time.Now()
 				logDebugf(protoInfo, "upgrade to TLS")
 				// do upgradeTls
 				tlsConn := tls.Server(rs.RawConn(), rm.getTlsConfig())
@@ -453,6 +465,8 @@ func (rm *RoutineManager) Handler(rs goetty.IOSession, msg interface{}, received
 
 				// tls upgradeOk
 				protocol.SetTlsEstablished()
+				ses.timestampMap[TSUpgradeTLSEnd] = time.Now()
+				v2.UpgradeTLSDurationHistogram.Observe(ses.timestampMap[TSUpgradeTLSEnd].Sub(ses.timestampMap[TSUpgradeTLSStart]).Seconds())
 			} else {
 				// client don't ask server to upgrade TLS
 				if err := protocol.Authenticate(ctx); err != nil {
@@ -475,9 +489,11 @@ func (rm *RoutineManager) Handler(rs goetty.IOSession, msg interface{}, received
 			}
 			protocol.SetEstablished()
 		}
+		ses.timestampMap[TSEstablishEnd] = time.Now()
+		v2.EstablishDurationHistogram.Observe(ses.timestampMap[TSEstablishEnd].Sub(ses.timestampMap[TSEstablishStart]).Seconds())
 
 		dbName := protocol.GetDatabaseName()
-		if ses != nil && dbName != "" {
+		if dbName != "" {
 			ses.SetDatabaseName(dbName)
 		}
 		rm.sessionManager.AddSession(ses)

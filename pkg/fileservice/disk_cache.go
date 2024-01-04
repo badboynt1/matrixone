@@ -317,6 +317,9 @@ func (d *DiskCache) writeFile(
 		logutil.Warn("write disk cache error", zap.Any("error", err))
 		return false, nil // ignore error
 	}
+	logutil.Debug("disk cache file written",
+		zap.Any("path", diskPath),
+	)
 
 	numWrite++
 	d.triggerEvict(ctx, int64(n))
@@ -457,6 +460,10 @@ func (d *DiskCache) evict(ctx context.Context) {
 		}
 		if err := os.Remove(path); err != nil {
 			continue // ignore
+		} else {
+			logutil.Debug("disk cache file removed",
+				zap.Any("path", path),
+			)
 		}
 		d.fileExists.Delete(path)
 		sumSize -= size
@@ -540,5 +547,29 @@ func (d *DiskCache) SetFile(
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func (d *DiskCache) DeletePaths(
+	ctx context.Context,
+	paths []string,
+) error {
+
+	for _, path := range paths {
+		diskPath := d.pathForFile(path)
+		//TODO also delete IOEntry files
+
+		doneUpdate := d.startUpdate(diskPath)
+		defer doneUpdate()
+
+		d.fileExists.Delete(diskPath)
+
+		if err := os.Remove(diskPath); err != nil {
+			if !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+
 	return nil
 }

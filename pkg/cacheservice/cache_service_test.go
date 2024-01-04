@@ -176,7 +176,7 @@ func TestCacheServerMain(t *testing.T) {
 			req := ct.NewRequest(pb.CmdMethod(10))
 			_, err := ct.SendMessage(ctx, addr, req)
 			assert.Error(t, err)
-			assert.Equal(t, "not supported: 10 not support in current service", err.Error())
+			assert.Equal(t, "not supported: 10 not support in current version", err.Error())
 		})
 	})
 }
@@ -193,7 +193,7 @@ func runTestWithCacheServer(t *testing.T, fs fileservice.FileService, fn func(sv
 	assert.NotNil(t, cs)
 	defer func() { assert.NoError(t, cs.Close()) }()
 	cs.AddHandleFunc(pb.CmdMethod_RemoteRead,
-		func(ctx context.Context, req *pb.Request, resp *pb.Response) error {
+		func(ctx context.Context, req *pb.Request, resp *pb.CacheResponse) error {
 			return fileservice.HandleRemoteRead(ctx, fs, req, resp)
 		},
 		false,

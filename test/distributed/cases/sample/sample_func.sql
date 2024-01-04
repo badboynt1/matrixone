@@ -11,15 +11,18 @@ insert into s_t1 values (3, 1, null), (3, 2, null), (3, 2, null);
 select c1, sample(c2, 1 rows), sample(c3, 1 rows) from s_t1;
 /* 2. cannot fixed sample function (non-scalar function) and aggregate function (scalar function) */
 select c1, max(c2), sample(c3, 1 rows) from s_t1;
-/* 3. sample(column list, N rows) requires 1 <= N <= 1000 */
+/* 3. sample(column list, N rows) requires 1 <= N <= 11000 */
 select sample(c1, 0 rows) from s_t1;
-select sample(c1, 1001 rows) from s_t1;
+select sample(c1, 11001 rows) from s_t1;
 /* 4. sample(column list, K percent) requires 0.00 <= K <= 100.00, should watch that 99.994 was accepted but will treat as 99.99 */
 select sample(c1, 101 percent) from s_t1;
 select sample(c1, 100.01 percent) from s_t1;
 /* 5. sample cannot be used in where clause */
 select c1, c2, c3 from s_t1 where sample(c1, 1 rows) = 1;
 select c1, c2, c3 from s_t1 where sample(c1, 1 percent) = 1;
+/* 6. cannot sample the group by column */
+select sample(c1, 1 rows) from s_t1 group by c1;
+select sample(*, 1 rows) from s_t1 group by c1;
 
 /* expected succeed case */
 /* 1. sample 2 rows from table by column c1 */
@@ -49,6 +52,8 @@ select sample(c3, 1 rows) from s_t1 where c1 = 3;
 select sample(c3, 2 rows) from s_t1 where c1 = 3;
 select c1, sample(c3, 3 rows) from s_t1 where c1 = 3 group by c1;
 select c1, sample(c3, 3 rows) from s_t1 group by c1 order by c1, c3;
+/* 12. sample as and outer filter */
+select * from (select c1, sample(c3, 3 rows) as k from s_t1 group by c1) where k < 2 order by c1, k;
 
 /* data prepare for sample from multi columns */
 drop table if exists s_t2;
@@ -66,6 +71,10 @@ select count(*) from (select sample(cc1, cc2, 2 rows) from s_t2);
 select sample(cc1, cc2, 100 percent) from s_t2 order by cc1 asc;
 /* 3. sample 0 percent from table by column cc1, cc2, expected to get empty */
 select sample(cc1, cc2, 0 percent) from s_t2;
+/* 4. should support the sample * from table */
+select sample(*, 100 percent) from s_t2 order by cc1 asc;
+select sample(*, 0 percent) from s_t2;
+select sample(*, 2 rows) from s_t2 order by cc1 asc;
 
 /* data prepare for expression sample */
 drop table if exists s_t3;
@@ -79,3 +88,4 @@ select sample(max(c1), 1 rows) from s_t3;
 /* expected succeed case */
 /* 1. expression (not only simple column) should be OK */
 select c1, sample(c1+1, 100 percent) from s_t3 order by c1;
+

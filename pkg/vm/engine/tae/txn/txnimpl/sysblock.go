@@ -38,7 +38,7 @@ func newSysBlock(table *txnTable, meta *catalog.BlockEntry) *txnSysBlock {
 	blk := &txnSysBlock{
 		txnBlock: newBlock(table, meta),
 		table:    table,
-		catalog:  meta.GetSegment().GetTable().GetCatalog(),
+		catalog:  meta.GetObject().GetTable().GetCatalog(),
 	}
 	return blk
 }
@@ -218,9 +218,9 @@ func FillColumnRow(table *catalog.TableEntry, node *catalog.MVCCNode[*catalog.Ta
 	}
 }
 
-func (blk *txnSysBlock) GetDeltaPersistedTS() types.TS {
-	return types.TS{}
-}
+// func (blk *txnSysBlock) GetDeltaPersistedTS() types.TS {
+// 	return types.TS{}.Next()
+// }
 
 func (blk *txnSysBlock) getColumnTableVec(
 	ts types.TS, colIdx int, mp *mpool.MPool,

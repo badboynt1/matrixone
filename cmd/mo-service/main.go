@@ -48,6 +48,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/tnservice"
 	"github.com/matrixorigin/matrixone/pkg/udf/pythonservice"
 	"github.com/matrixorigin/matrixone/pkg/util"
+	"github.com/matrixorigin/matrixone/pkg/util/debug/goroutine"
 	"github.com/matrixorigin/matrixone/pkg/util/export"
 	"github.com/matrixorigin/matrixone/pkg/util/export/table"
 	"github.com/matrixorigin/matrixone/pkg/util/metric/mometric"
@@ -156,6 +157,10 @@ func startService(
 		return err
 	}
 	setupProcessLevelRuntime(cfg, stopper)
+
+	setupStatusServer(runtime.ProcessLevelRuntime())
+
+	goroutine.StartLeakCheck(stopper, cfg.Goroutine)
 
 	st, err := cfg.getServiceType()
 	if err != nil {

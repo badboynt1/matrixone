@@ -17,6 +17,7 @@ package fileservice
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -64,26 +65,31 @@ func NewLocalFS(
 	perfCounterSets []*perfcounter.CounterSet,
 ) (*LocalFS, error) {
 
-	// ensure dir
-	f, err := os.Open(rootPath)
-	if os.IsNotExist(err) {
-		// not exists, create
-		err := os.MkdirAll(rootPath, 0755)
+	// get absolute path
+	if rootPath != "" {
+		var err error
+		rootPath, err = filepath.Abs(rootPath)
 		if err != nil {
 			return nil, err
 		}
 
-	} else if err != nil {
-		// stat error
-		return nil, err
+		// ensure dir
+		f, err := os.Open(rootPath)
+		if os.IsNotExist(err) {
+			// not exists, create
+			err := os.MkdirAll(rootPath, 0755)
+			if err != nil {
+				return nil, err
+			}
 
-	} else {
-		defer f.Close()
-	}
+		} else if err != nil {
+			// stat error
+			return nil, err
 
-	// create tmp dir
-	if err := os.MkdirAll(filepath.Join(rootPath, ".tmp"), 0755); err != nil {
-		return nil, err
+		} else {
+			defer f.Close()
+		}
+
 	}
 
 	fs := &LocalFS{
@@ -219,8 +225,8 @@ func (l *LocalFS) write(ctx context.Context, vector IOVector) (bytesWritten int,
 
 	// write
 	f, err := os.CreateTemp(
-		filepath.Join(l.rootPath, ".tmp"),
-		"*.tmp",
+		l.rootPath,
+		".tmp.*",
 	)
 	if err != nil {
 		return 0, err
@@ -301,8 +307,21 @@ func (l *LocalFS) Read(ctx context.Context, vector *IOVector) (err error) {
 		wait()
 	}
 
+	for _, cache := range vector.Caches {
+		cache := cache
+		if err := readCache(ctx, cache, vector); err != nil {
+			return err
+		}
+		defer func() {
+			if err != nil {
+				return
+			}
+			err = cache.Update(ctx, vector, false)
+		}()
+	}
+
 	if l.memCache != nil {
-		if err := l.memCache.Read(ctx, vector); err != nil {
+		if err := readCache(ctx, l.memCache, vector); err != nil {
 			return err
 		}
 		defer func() {
@@ -314,7 +333,7 @@ func (l *LocalFS) Read(ctx context.Context, vector *IOVector) (err error) {
 	}
 
 	if l.diskCache != nil {
-		if err := l.diskCache.Read(ctx, vector); err != nil {
+		if err := readCache(ctx, l.diskCache, vector); err != nil {
 			return err
 		}
 		defer func() {
@@ -326,7 +345,7 @@ func (l *LocalFS) Read(ctx context.Context, vector *IOVector) (err error) {
 	}
 
 	if l.remoteCache != nil {
-		if err := l.remoteCache.Read(ctx, vector); err != nil {
+		if err := readCache(ctx, l.remoteCache, vector); err != nil {
 			return err
 		}
 	}
@@ -360,8 +379,21 @@ func (l *LocalFS) ReadCache(ctx context.Context, vector *IOVector) (err error) {
 		wait()
 	}
 
+	for _, cache := range vector.Caches {
+		cache := cache
+		if err := readCache(ctx, cache, vector); err != nil {
+			return err
+		}
+		defer func() {
+			if err != nil {
+				return
+			}
+			err = cache.Update(ctx, vector, false)
+		}()
+	}
+
 	if l.memCache != nil {
-		if err := l.memCache.Read(ctx, vector); err != nil {
+		if err := readCache(ctx, l.memCache, vector); err != nil {
 			return err
 		}
 	}
@@ -694,7 +726,27 @@ func (l *LocalFS) Delete(ctx context.Context, filePaths ...string) error {
 			return err
 		}
 	}
-	return nil
+
+	return errors.Join(
+		func() error {
+			if l.memCache == nil {
+				return nil
+			}
+			return l.memCache.DeletePaths(ctx, filePaths)
+		}(),
+		func() error {
+			if l.diskCache == nil {
+				return nil
+			}
+			return l.diskCache.DeletePaths(ctx, filePaths)
+		}(),
+		func() error {
+			if l.remoteCache == nil {
+				return nil
+			}
+			return l.remoteCache.DeletePaths(ctx, filePaths)
+		}(),
+	)
 }
 
 func (l *LocalFS) deleteSingle(ctx context.Context, filePath string) error {
@@ -928,6 +980,10 @@ func entryIsDir(path string, name string, entry fs.FileInfo) (bool, error) {
 	if entry.Mode().Type()&fs.ModeSymlink > 0 {
 		stat, err := os.Stat(filepath.Join(path, name))
 		if err != nil {
+			if os.IsNotExist(err) {
+				// invalid sym link
+				return false, nil
+			}
 			return false, err
 		}
 		return entryIsDir(path, name, stat)

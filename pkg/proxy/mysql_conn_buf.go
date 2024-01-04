@@ -43,7 +43,13 @@ const (
 type MySQLCmd byte
 
 // cmdQuery is a query cmd.
-const cmdQuery MySQLCmd = 0x03
+const (
+	cmdQuery  MySQLCmd = 0x03
+	cmdInitDB MySQLCmd = 0x02
+	// For stmt prepare and execute cmd from JDBC.
+	cmdStmtPrepare MySQLCmd = 0x16
+	cmdStmtExecute MySQLCmd = 0x17
+)
 
 // MySQLConn contains a buffer to save data which may be only part
 // of a packet.
@@ -93,6 +99,9 @@ type msgBuf struct {
 	mu struct {
 		sync.Mutex
 		inTxn bool
+		// prepared is true means that client just send a prepared cmd and not
+		// execute it yet. After it is executed, set to false.
+		prepared bool
 	}
 }
 
@@ -144,8 +153,9 @@ func (b *msgBuf) preRecv() (int, error) {
 		return mysqlHeadLen, nil
 	}
 
-	// Max length is 3 bytes.
-	if bodyLen < 1 || bodyLen >= 1<<24-1 {
+	// Max length is 3 bytes. 26MB-1 is the legal max length of a MySQL packet.
+	// Reference To : https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html
+	if bodyLen < 1 || bodyLen > 1<<24-1 {
 		return 0, moerr.NewInternalErrorNoCtx("mysql protocol error: body length %d", bodyLen)
 	}
 
@@ -163,7 +173,7 @@ func (b *msgBuf) consumeMsg(msg []byte) bool {
 
 	// For the client->server pipe, we catch some statements to do some more actions.
 	if b.name == connClientName {
-		e, r := makeEvent(msg)
+		e, r := makeEvent(msg, b)
 		if e == nil {
 			return false
 		}
@@ -212,7 +222,7 @@ func (b *msgBuf) handleOKPacket(msg []byte) {
 
 // handleEOFPacket handles the EOF packet from server to update the txn state.
 func (b *msgBuf) handleEOFPacket(msg []byte) {
-	status := binary.LittleEndian.Uint16(msg[3:])
+	status := binary.LittleEndian.Uint16(msg[7:])
 	b.setTxnStatus(status)
 }
 
@@ -228,6 +238,20 @@ func (b *msgBuf) isInTxn() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.mu.inTxn
+}
+
+// setPrepared sets the prepared state.
+func (b *msgBuf) setPrepared(p bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.mu.prepared = p
+}
+
+// isInTxn returns if the session is just prepared and not executed yet.
+func (b *msgBuf) isPrepared() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.mu.prepared
 }
 
 // sendTo sends the data in buffer to destination.

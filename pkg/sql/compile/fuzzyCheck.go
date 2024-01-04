@@ -4,19 +4,22 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//      http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package compile
 
 import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/common/reuse"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,7 +45,7 @@ func newFuzzyCheck(n *plan.Node) (*fuzzyCheck, error) {
 		return nil, moerr.NewInternalErrorNoCtx("fuzzyfilter failed to get the db/tbl name")
 	}
 
-	f := new(fuzzyCheck)
+	f := reuse.Alloc[fuzzyCheck](nil)
 	f.tbl = f.wrapup(tblName)
 	f.db = f.wrapup(dbName)
 	f.attr = n.TableDef.Pkey.PkeyColName
@@ -58,17 +61,38 @@ func newFuzzyCheck(n *plan.Node) (*fuzzyCheck, error) {
 	if n.TableDef.Pkey.PkeyColName == catalog.CPrimaryKeyColName {
 		f.isCompound = true
 		f.compoundCols = f.sortColDef(n.TableDef.Pkey.Names, n.TableDef.Cols)
-	} else if n.TableDef.ParentUniqueCols != nil {
-		if len(n.TableDef.ParentUniqueCols) > 1 {
+	}
+
+	if n.Fuzzymessage != nil {
+		if len(n.Fuzzymessage.ParentUniqueCols) > 1 {
 			f.isCompound = true
-			f.tbl = n.TableDef.ParentTblName // search for data table but not index table
-			f.compoundCols = n.TableDef.ParentUniqueCols
+			f.tbl = n.Fuzzymessage.ParentTableName
+			f.compoundCols = n.Fuzzymessage.ParentUniqueCols
 		} else {
-			f.col = n.TableDef.ParentUniqueCols[0]
+			f.col = n.Fuzzymessage.ParentUniqueCols[0]
 		}
 	}
 
 	return f, nil
+}
+
+func (f fuzzyCheck) Name() string {
+	return "compile.fuzzyCheck"
+}
+
+func (f *fuzzyCheck) reset() {
+	f.db = ""
+	f.tbl = ""
+	f.attr = ""
+	f.condition = ""
+	f.isCompound = false
+	f.col = nil
+	f.compoundCols = nil
+	f.cnt = 0
+}
+
+func (f *fuzzyCheck) release() {
+	reuse.Free[fuzzyCheck](f, nil)
 }
 
 // fill will generate condition for background SQL to check if duplicate constraint is satisfied
@@ -129,7 +153,9 @@ func (f *fuzzyCheck) fill(ctx context.Context, bat *batch.Batch) error {
 			// the last condition does not need to be followed by "and"
 			one.WriteString(fmt.Sprintf("%s = %s", cAttrs[j], pkeys[j][i]))
 			one.WriteByte(')')
-			one.WriteTo(&all)
+			if _, err = one.WriteTo(&all); err != nil {
+				return err
+			}
 
 			// use or join each compound primary keys
 			all.WriteString(" or ")
@@ -141,7 +167,9 @@ func (f *fuzzyCheck) fill(ctx context.Context, bat *batch.Batch) error {
 		}
 
 		one.WriteString(fmt.Sprintf("%s = %s", cAttrs[j], pkeys[j][lastRow]))
-		one.WriteTo(&all)
+		if _, err = one.WriteTo(&all); err != nil {
+			return err
+		}
 		f.condition = all.String()
 	}
 
@@ -166,7 +194,11 @@ func (f *fuzzyCheck) firstlyCheck(ctx context.Context, toCheck *vector.Vector) e
 			if err != nil {
 				return err
 			}
-			es := t.ErrString()
+			scales := make([]int32, len(f.compoundCols))
+			for i, c := range f.compoundCols {
+				scales[i] = c.Typ.Scale
+			}
+			es := t.ErrString(scales)
 			kcnt[es]++
 		}
 	}
@@ -250,7 +282,11 @@ func (f *fuzzyCheck) backgroundSQLCheck(c *Compile) error {
 				if t, e := types.Unpack(toCheck.GetBytesAt(0)); e != nil {
 					err = e
 				} else {
-					err = moerr.NewDuplicateEntry(c.ctx, t.ErrString(), f.attr)
+					scales := make([]int32, len(f.compoundCols))
+					for i, c := range f.compoundCols {
+						scales[i] = c.Typ.Scale
+					}
+					err = moerr.NewDuplicateEntry(c.ctx, t.ErrString(scales), f.attr)
 				}
 			}
 		}
@@ -334,7 +370,7 @@ func (f *fuzzyCheck) formatNonCompound(toCheck *vector.Vector, useInErr bool) ([
 		// string family but not include binary
 		case types.T_char, types.T_varchar, types.T_varbinary, types.T_text, types.T_uuid, types.T_binary:
 			for i, str := range ss {
-				ss[i] = "'" + str + "'"
+				ss[i] = strconv.Quote(str)
 			}
 			return ss, nil
 
@@ -366,7 +402,7 @@ func (f *fuzzyCheck) formatNonCompound(toCheck *vector.Vector, useInErr bool) ([
 
 // datime time and timestamp type can not split by space directly
 func (f *fuzzyCheck) handletimesType(toCheck *vector.Vector) []string {
-	result := []string{}
+	result := make([]string, 0, toCheck.Length())
 	typ := toCheck.GetType()
 
 	if typ.Oid == types.T_timestamp {

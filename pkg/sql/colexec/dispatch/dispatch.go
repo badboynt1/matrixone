@@ -17,6 +17,7 @@ package dispatch
 import (
 	"bytes"
 	"context"
+
 	"github.com/matrixorigin/matrixone/pkg/logutil"
 
 	"github.com/google/uuid"
@@ -97,25 +98,37 @@ func (arg *Argument) Prepare(proc *process.Process) error {
 
 func printShuffleResult(arg *Argument) {
 	if arg.ctr.batchCnt != nil && arg.ctr.rowCnt != nil {
-		logutil.Debugf("shuffle dispatch result: batchcnt %v, rowcnt %v", arg.ctr.batchCnt, arg.ctr.rowCnt)
+		logutil.Debugf("shuffle type %v,  dispatch result: batchcnt %v, rowcnt %v", arg.ShuffleType, arg.ctr.batchCnt, arg.ctr.rowCnt)
 	}
 }
 
 func (arg *Argument) Call(proc *process.Process) (vm.CallResult, error) {
+	if err, isCancel := vm.CancelCheck(proc); isCancel {
+		return vm.CancelResult, err
+	}
+
 	ap := arg
 
 	result, err := arg.Children[0].Call(proc)
 	if err != nil {
 		return result, err
 	}
+
+	analy := proc.GetAnalyze(arg.info.Idx, arg.info.ParallelIdx, arg.info.ParallelMajor)
+	analy.Start()
+	defer analy.Stop()
+
 	bat := result.Batch
 
 	if result.Batch == nil {
 		if ap.RecSink {
-			bat = makeEndBatch(proc)
+			bat, err = makeEndBatch(proc)
+			if err != nil {
+				return result, err
+			}
 			defer func() {
 				if bat != nil {
-					bat.Clean(proc.Mp())
+					proc.PutBatch(bat)
 				}
 			}()
 		} else {
@@ -148,16 +161,18 @@ func (arg *Argument) Call(proc *process.Process) (vm.CallResult, error) {
 	}
 }
 
-func makeEndBatch(proc *process.Process) *batch.Batch {
+func makeEndBatch(proc *process.Process) (*batch.Batch, error) {
 	b := batch.NewWithSize(1)
 	b.Attrs = []string{
 		"recursive_col",
 	}
 	b.SetVector(0, proc.GetVector(types.T_varchar.ToType()))
-	vector.AppendBytes(b.GetVector(0), []byte("check recursive status"), false, proc.GetMPool())
-	batch.SetLength(b, 1)
-	b.SetEnd()
-	return b
+	err := vector.AppendBytes(b.GetVector(0), []byte("check recursive status"), false, proc.GetMPool())
+	if err == nil {
+		batch.SetLength(b, 1)
+		b.SetEnd()
+	}
+	return b, err
 }
 
 func (arg *Argument) waitRemoteRegsReady(proc *process.Process) (bool, error) {
@@ -176,12 +191,7 @@ func (arg *Argument) waitRemoteRegsReady(proc *process.Process) (bool, error) {
 
 		case csinfo := <-proc.DispatchNotifyCh:
 			timeoutCancel()
-			arg.ctr.remoteReceivers = append(arg.ctr.remoteReceivers, &WrapperClientSession{
-				msgId:  csinfo.MsgId,
-				cs:     csinfo.Cs,
-				uuid:   csinfo.Uid,
-				doneCh: csinfo.DoneCh,
-			})
+			arg.ctr.remoteReceivers = append(arg.ctr.remoteReceivers, csinfo)
 			cnt--
 		}
 	}
@@ -192,7 +202,7 @@ func (arg *Argument) waitRemoteRegsReady(proc *process.Process) (bool, error) {
 func (arg *Argument) prepareRemote(proc *process.Process) {
 	arg.ctr.prepared = false
 	arg.ctr.isRemote = true
-	arg.ctr.remoteReceivers = make([]*WrapperClientSession, 0, arg.ctr.remoteRegsCnt)
+	arg.ctr.remoteReceivers = make([]process.WrapCs, 0, arg.ctr.remoteRegsCnt)
 	arg.ctr.remoteToIdx = make(map[uuid.UUID]int)
 	for i, rr := range arg.RemoteRegs {
 		if arg.FuncId == ShuffleToAllFunc {

@@ -32,6 +32,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"unsafe"
 
@@ -69,7 +70,7 @@ func (tp Tuple) String() string {
 	return printTuple(tp)
 }
 
-func (tp Tuple) ErrString() string {
+func (tp Tuple) ErrString(scales []int32) string {
 	var res strings.Builder
 	if len(tp) > 1 {
 		res.WriteString("(")
@@ -89,9 +90,9 @@ func (tp Tuple) ErrString() string {
 		case Timestamp:
 			res.WriteString(fmt.Sprintf("%v", t.String()))
 		case Decimal64:
-			res.WriteString(fmt.Sprintf("%v", t.Format(0)))
+			res.WriteString(fmt.Sprintf("%v", t.Format(scales[i])))
 		case Decimal128:
-			res.WriteString(fmt.Sprintf("%v", t.Format(0)))
+			res.WriteString(fmt.Sprintf("%v", t.Format(scales[i])))
 		default:
 			res.WriteString(fmt.Sprintf("%v", t))
 		}
@@ -113,7 +114,7 @@ func (tp Tuple) SQLStrings() []string {
 			res = append(res, fmt.Sprintf("%v", t))
 		case []byte:
 			s := *(*string)(unsafe.Pointer(&t))
-			res = append(res, "'"+s+"'")
+			res = append(res, strconv.Quote(s))
 		case Date:
 			res = append(res, fmt.Sprintf("'%v'", t.String()))
 		case Time:

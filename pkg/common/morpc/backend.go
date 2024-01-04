@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -32,7 +31,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/common/stopper"
 	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/util/errutil"
-	"github.com/matrixorigin/matrixone/pkg/util/profile"
 	"go.uber.org/zap"
 )
 
@@ -127,6 +125,13 @@ func WithBackendMetrics(metrics *metrics) BackendOption {
 	}
 }
 
+// WithBackendFreeOrphansResponse setup free orphans response func
+func WithBackendFreeOrphansResponse(value func(Message)) BackendOption {
+	return func(rb *remoteBackend) {
+		rb.options.freeResponse = value
+	}
+}
+
 type remoteBackend struct {
 	remote       string
 	metrics      *metrics
@@ -155,6 +160,7 @@ type remoteBackend struct {
 		streamBufferSize   int
 		filter             func(msg Message, backendAddr string) bool
 		readTimeout        time.Duration
+		freeResponse       func(Message)
 	}
 
 	stateMu struct {
@@ -193,7 +199,7 @@ func NewRemoteBackend(
 		readStopper: stopper.NewStopper(fmt.Sprintf("backend-read-%s", remote)),
 		remote:      remote,
 		codec:       codec,
-		resetConnC:  make(chan struct{}),
+		resetConnC:  make(chan struct{}, 1),
 		stopWriteC:  make(chan struct{}),
 	}
 
@@ -474,6 +480,7 @@ func (rb *remoteBackend) writeLoop(ctx context.Context) {
 			}
 
 			if len(written) > 0 {
+				rb.metrics.outputBytesCounter.Add(float64(rb.conn.OutBuf().Readable()))
 				if err := rb.conn.Flush(writeTimeout); err != nil {
 					for _, f := range written {
 						id := f.getSendMessageID()
@@ -575,6 +582,7 @@ func (rb *remoteBackend) readLoop(ctx context.Context) {
 				wg.Add(1)
 			}
 			resp := msg.(RPCMessage).Message
+			rb.metrics.inputBytesCounter.Add(float64(resp.Size()))
 			rb.requestDone(ctx, resp.GetID(), msg.(RPCMessage), nil, cb)
 			if rb.options.hasPayloadResponse {
 				wg.Wait()
@@ -733,7 +741,12 @@ func (rb *remoteBackend) stopWriteLoop() {
 	close(rb.stopWriteC)
 }
 
-func (rb *remoteBackend) requestDone(ctx context.Context, id uint64, msg RPCMessage, err error, cb func()) {
+func (rb *remoteBackend) requestDone(
+	ctx context.Context,
+	id uint64,
+	msg RPCMessage,
+	err error,
+	cb func()) {
 	start := time.Now()
 	defer func() {
 		rb.metrics.doneDurationHistogram.Observe(time.Since(start).Seconds())
@@ -772,6 +785,12 @@ func (rb *remoteBackend) requestDone(ctx context.Context, id uint64, msg RPCMess
 		rb.mu.Unlock()
 		if cb != nil {
 			cb()
+		}
+
+		if !msg.internal &&
+			response != nil &&
+			rb.options.freeResponse != nil {
+			rb.options.freeResponse(response)
 		}
 	}
 }
@@ -914,10 +933,7 @@ func (rb *remoteBackend) scheduleResetConn() {
 	select {
 	case rb.resetConnC <- struct{}{}:
 		rb.logger.Debug("schedule reset remote connection")
-	case <-time.After(time.Second * 10):
-		// dump all goroutines to stderr
-		profile.ProfileGoroutine(os.Stderr, 2)
-		rb.logger.Fatal("BUG: schedule reset remote connection timeout")
+	default:
 	}
 }
 

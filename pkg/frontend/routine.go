@@ -22,10 +22,12 @@ import (
 	"time"
 
 	"github.com/fagongzi/goetty/v2"
+	"github.com/matrixorigin/matrixone/pkg/common/runtime"
 	"github.com/matrixorigin/matrixone/pkg/config"
 	"github.com/matrixorigin/matrixone/pkg/defines"
 	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/util/metric"
+	"github.com/matrixorigin/matrixone/pkg/util/status"
 	"github.com/matrixorigin/matrixone/pkg/util/trace"
 	"go.uber.org/zap"
 )
@@ -62,6 +64,16 @@ type Routine struct {
 	goroutineID uint64
 
 	restricted atomic.Bool
+
+	printInfoOnce bool
+}
+
+func (rt *Routine) needPrintSessionInfo() bool {
+	if rt.printInfoOnce {
+		rt.printInfoOnce = false
+		return true
+	}
+	return false
 }
 
 func (rt *Routine) setResricted(val bool) {
@@ -187,6 +199,34 @@ func (rt *Routine) cancelRequestCtx() {
 	}
 }
 
+func (rt *Routine) reportSystemStatus() (r bool) {
+	ss := rt.ses
+	if ss == nil {
+		return
+	}
+	rm := ss.getRoutineManager()
+	if rm == nil {
+		return
+	}
+
+	now := time.Now()
+	defer func() {
+		if r {
+			rm.reportSystemStatusTime.Store(&now)
+		}
+	}()
+	last := rm.reportSystemStatusTime.Load()
+	if last == nil {
+		r = true
+		return
+	}
+	if now.Sub(*last) > time.Minute {
+		r = true
+		return
+	}
+	return
+}
+
 func (rt *Routine) handleRequest(req *Request) error {
 	var ses *Session
 	var routineCtx context.Context
@@ -197,7 +237,20 @@ func (rt *Routine) handleRequest(req *Request) error {
 	reqBegin := time.Now()
 	var span trace.Span
 	routineCtx, span = trace.Start(rt.getCancelRoutineCtx(), "Routine.handleRequest",
-		trace.WithKind(trace.SpanKindStatement))
+		trace.WithHungThreshold(30*time.Minute),
+		trace.WithProfileGoroutine(),
+		trace.WithProfileSystemStatus(func() ([]byte, error) {
+			ss, ok := runtime.ProcessLevelRuntime().GetGlobalVariables(runtime.StatusServer)
+			if !ok {
+				return nil, nil
+			}
+			if !rt.reportSystemStatus() {
+				return nil, nil
+			}
+			data, err := ss.(*status.Server).Dump()
+			return data, err
+		}),
+	)
 	defer span.End()
 
 	parameters := rt.getParameters()
@@ -209,6 +262,21 @@ func (rt *Routine) handleRequest(req *Request) error {
 	rt.setCancelRequestFunc(cancelRequestFunc)
 	ses = rt.getSession()
 	ses.UpdateDebugString()
+
+	if rt.needPrintSessionInfo() {
+		ts := ses.timestampMap
+		logInfof(ses.GetDebugString(), fmt.Sprintf("mo accept connection, time cost of Created: %s, Establish: %s, UpgradeTLS: %s, Authenticate: %s, CheckTenant: %s, CheckUser: %s, CheckRole: %s, CheckDbName: %s, InitGlobalSysVar: %s",
+			ts[TSCreatedEnd].Sub(ts[TSCreatedStart]).String(),
+			ts[TSEstablishEnd].Sub(ts[TSEstablishStart]).String(),
+			ts[TSUpgradeTLSEnd].Sub(ts[TSUpgradeTLSStart]).String(),
+			ts[TSAuthenticateEnd].Sub(ts[TSAuthenticateStart]).String(),
+			ts[TSCheckTenantEnd].Sub(ts[TSCheckTenantStart]).String(),
+			ts[TSCheckUserEnd].Sub(ts[TSCheckUserStart]).String(),
+			ts[TSCheckRoleEnd].Sub(ts[TSCheckRoleStart]).String(),
+			ts[TSCheckDbNameEnd].Sub(ts[TSCheckDbNameStart]).String(),
+			ts[TSInitGlobalSysVarEnd].Sub(ts[TSInitGlobalSysVarStart]).String()))
+	}
+
 	tenant := ses.GetTenantInfo()
 	nodeCtx := cancelRequestCtx
 	if ses.getRoutineManager().baseService != nil {
@@ -375,6 +443,7 @@ func NewRoutine(ctx context.Context, protocol MysqlProtocol, executor CmdExecuto
 		cancelRoutineCtx:  cancelRoutineCtx,
 		cancelRoutineFunc: cancelRoutineFunc,
 		parameters:        parameters,
+		printInfoOnce:     true,
 	}
 
 	return ri
