@@ -15,7 +15,6 @@
 package cnclient
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
