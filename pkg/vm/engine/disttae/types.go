@@ -16,6 +16,7 @@ package disttae
 
 import (
 	"context"
+	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/index"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -59,6 +60,8 @@ const (
 	COMPACTION_CN
 	UPDATE
 	ALTER
+	INSERT_TXN // Only for CN workspace consumption, not sent to DN
+	DELETE_TXN // Only for CN workspace consumption, not sent to DN
 )
 
 const (
@@ -178,7 +181,11 @@ type Transaction struct {
 	// notice that it's guarded by txn.Lock()
 	cnBlkId_Pos map[types.Blockid]Pos
 	// committed block belongs to txn's snapshot data -> delta locations for committed block's deletes.
-	blockId_tn_delete_metaLoc_batch map[types.Blockid][]*batch.Batch
+	blockId_tn_delete_metaLoc_batch struct {
+		sync.RWMutex
+		data map[types.Blockid][]*batch.Batch
+	}
+	//blockId_tn_delete_metaLoc_batch map[types.Blockid][]*batch.Batch
 	//select list for raw batch comes from txn.writes.batch.
 	batchSelectList map[*batch.Batch][]int64
 	toFreeBatches   map[tableKey][]*batch.Batch
@@ -201,7 +208,7 @@ type Pos struct {
 	tbName    string
 	dbName    string
 	offset    int64
-	blkInfo   catalog.BlockInfo
+	blkInfo   objectio.BlockInfo
 }
 
 // FIXME: The map inside this one will be accessed concurrently, using
@@ -303,11 +310,18 @@ func (txn *Transaction) IncrStatementID(ctx context.Context, commit bool) error 
 	return txn.handleRCSnapshot(ctx, commit)
 }
 
-// Adjust adjust writes order
-func (txn *Transaction) Adjust() error {
+// writeOffset returns the offset of the first write in the workspace
+func (txn *Transaction) WriteOffset() uint64 {
 	txn.Lock()
 	defer txn.Unlock()
-	if err := txn.adjustUpdateOrderLocked(); err != nil {
+	return uint64(len(txn.writes))
+}
+
+// Adjust adjust writes order
+func (txn *Transaction) Adjust(writeOffset uint64) error {
+	txn.Lock()
+	defer txn.Unlock()
+	if err := txn.adjustUpdateOrderLocked(writeOffset); err != nil {
 		return err
 	}
 	if err := txn.mergeTxnWorkspaceLocked(); err != nil {
@@ -318,23 +332,20 @@ func (txn *Transaction) Adjust() error {
 
 // The current implementation, update's delete and insert are executed concurrently, inside workspace it
 // may be the order of insert+delete that needs to be adjusted.
-func (txn *Transaction) adjustUpdateOrderLocked() error {
+func (txn *Transaction) adjustUpdateOrderLocked(writeOffset uint64) error {
 	if txn.statementID > 0 {
-		start := txn.statements[txn.statementID-1]
-		writes := make([]Entry, 0, len(txn.writes[start:]))
-		for i := start; i < len(txn.writes); i++ {
-			if txn.writes[i].typ == DELETE {
+		writes := make([]Entry, 0, len(txn.writes[writeOffset:]))
+		for i := writeOffset; i < uint64(len(txn.writes)); i++ {
+			if !txn.writes[i].isCatalog() && txn.writes[i].typ == DELETE {
 				writes = append(writes, txn.writes[i])
 			}
 		}
-		for i := start; i < len(txn.writes); i++ {
-			if txn.writes[i].typ != DELETE {
+		for i := writeOffset; i < uint64(len(txn.writes)); i++ {
+			if txn.writes[i].isCatalog() || txn.writes[i].typ != DELETE {
 				writes = append(writes, txn.writes[i])
 			}
 		}
-		txn.writes = append(txn.writes[:start], writes...)
-		// restore the scope of the statement
-		txn.statements[txn.statementID-1] = len(txn.writes)
+		txn.writes = append(txn.writes[:writeOffset], writes...)
 	}
 	return nil
 }
@@ -350,6 +361,7 @@ func (txn *Transaction) RollbackLastStatement(ctx context.Context) error {
 
 	txn.rollbackCount++
 	if txn.statementID > 0 {
+		txn.clearTableCache()
 		txn.rollbackCreateTableLocked()
 
 		txn.statementID--
@@ -358,7 +370,7 @@ func (txn *Transaction) RollbackLastStatement(ctx context.Context) error {
 			if txn.writes[i].bat == nil {
 				continue
 			}
-			txn.writes[i].bat.Clean(txn.engine.mp)
+			txn.writes[i].bat.Clean(txn.proc.Mp())
 		}
 		txn.writes = txn.writes[:end]
 		txn.statements = txn.statements[:txn.statementID]
@@ -439,6 +451,13 @@ func (e *Entry) isGeneratedByTruncate() bool {
 		e.databaseId == catalog.MO_CATALOG_ID &&
 		e.tableId == catalog.MO_TABLES_ID &&
 		e.truncate
+}
+
+// isCatalog denotes the entry is apply the tree tables
+func (e *Entry) isCatalog() bool {
+	return e.tableId == catalog.MO_TABLES_ID ||
+		e.tableId == catalog.MO_COLUMNS_ID ||
+		e.tableId == catalog.MO_DATABASE_ID
 }
 
 // txnDatabase represents an opened database in a transaction
@@ -585,19 +604,32 @@ type withFilterMixin struct {
 	sels []int32
 }
 
+type blockSortHelper struct {
+	blk *objectio.BlockInfo
+	zm  index.ZM
+}
+
 type blockReader struct {
 	withFilterMixin
 
 	// used for prefetch
-	infos       [][]*catalog.BlockInfo
-	steps       []int
-	currentStep int
+	dontPrefetch bool
+	infos        [][]*objectio.BlockInfo
+	steps        []int
+	currentStep  int
 
 	scanType int
 	// block list to scan
-	blks []*catalog.BlockInfo
+	blks []*objectio.BlockInfo
 	//buffer for block's deletes
 	buffer []int64
+
+	// for ordered scan
+	desc     bool
+	blockZMS []index.ZM
+	OrderBy  []*plan.OrderBySpec
+	sorted   bool // blks need to be sorted by zonemap
+	filterZM objectio.ZoneMap
 }
 
 type blockMergeReader struct {
@@ -617,10 +649,4 @@ type mergeReader struct {
 }
 
 type emptyReader struct {
-}
-
-type pkRange struct {
-	isRange bool
-	items   []int64
-	ranges  []int64
 }
