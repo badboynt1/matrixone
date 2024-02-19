@@ -33,7 +33,6 @@ func (arg *Argument) String(buf *bytes.Buffer) {
 }
 
 func (arg *Argument) Prepare(proc *process.Process) (err error) {
-	arg.OrderBy = arg.Reader.GetOrderBy()
 	return nil
 }
 

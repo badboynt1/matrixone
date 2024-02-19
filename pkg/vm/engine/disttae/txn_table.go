@@ -1719,7 +1719,7 @@ func (tbl *txnTable) GetDBID(ctx context.Context) uint64 {
 	return tbl.db.databaseId
 }
 
-func (tbl *txnTable) NewReader(ctx context.Context, num int, expr *plan.Expr, ranges []byte, orderedScan bool) ([]engine.Reader, error) {
+func (tbl *txnTable) NewReader(ctx context.Context, num int, expr *plan.Expr, ranges []byte) ([]engine.Reader, error) {
 	encodedPK, hasNull, _ := tbl.makeEncodedPK(expr)
 	blkArray := objectio.BlockInfoSlice(ranges)
 	if hasNull {
@@ -1755,7 +1755,7 @@ func (tbl *txnTable) NewReader(ctx context.Context, num int, expr *plan.Expr, ra
 		}
 
 		if len(cleanBlks) > 0 {
-			rds0, err = tbl.newBlockReader(ctx, num, expr, cleanBlks, tbl.proc.Load(), orderedScan)
+			rds0, err = tbl.newBlockReader(ctx, num, expr, cleanBlks, tbl.proc.Load())
 			if err != nil {
 				return nil, err
 			}
@@ -1773,7 +1773,7 @@ func (tbl *txnTable) NewReader(ctx context.Context, num int, expr *plan.Expr, ra
 	for i := 0; i < blkArray.Len(); i++ {
 		blkInfos = append(blkInfos, blkArray.Get(i))
 	}
-	return tbl.newBlockReader(ctx, num, expr, blkInfos, tbl.proc.Load(), orderedScan)
+	return tbl.newBlockReader(ctx, num, expr, blkInfos, tbl.proc.Load())
 }
 
 func (tbl *txnTable) makeEncodedPK(
@@ -1855,8 +1855,7 @@ func (tbl *txnTable) newBlockReader(
 	num int,
 	expr *plan.Expr,
 	blkInfos []*objectio.BlockInfo,
-	proc *process.Process,
-	orderedScan bool) ([]engine.Reader, error) {
+	proc *process.Process) ([]engine.Reader, error) {
 	rds := make([]engine.Reader, num)
 	ts := tbl.db.txn.op.SnapshotTS()
 	tableDef := tbl.GetTableDef(ctx)
@@ -1884,15 +1883,6 @@ func (tbl *txnTable) newBlockReader(
 		defines.SharedFileServiceName)
 	if err != nil {
 		return nil, err
-	}
-
-	if orderedScan {
-		if num != 1 {
-			panic("ordered scan must run in only one parallel")
-		}
-		rd := newBlockReader(ctx, tableDef, ts, blkInfos, expr, fs, proc)
-		rd.dontPrefetch = true
-		return []engine.Reader{rd}, nil
 	}
 
 	infos, steps := groupBlocksToObjects(blkInfos, num)

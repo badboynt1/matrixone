@@ -17,7 +17,6 @@ package table_scan
 import (
 	"github.com/matrixorigin/matrixone/pkg/common/reuse"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
-	"github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"github.com/matrixorigin/matrixone/pkg/vm"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
@@ -26,9 +25,8 @@ import (
 var _ vm.Operator = new(Argument)
 
 type Argument struct {
-	OrderBy []*plan.OrderBySpec
-	Reader  engine.Reader
-	Attrs   []string
+	Reader engine.Reader
+	Attrs  []string
 
 	buf    *batch.Batch
 	tmpBuf *batch.Batch

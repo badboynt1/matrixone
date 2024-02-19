@@ -82,7 +82,6 @@ type Source struct {
 	AccountId              *plan.PubInfo
 
 	RuntimeFilterSpecs []*plan.RuntimeFilterSpec
-	OrderBy            []*plan.OrderBySpec // for ordered scan
 }
 
 // Col is the information of attribute

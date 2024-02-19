@@ -2117,7 +2117,6 @@ func (c *Compile) compileTableScanWithNode(n *plan.Node, node engine.Node, filte
 		AccountId:              n.ObjRef.GetPubInfo(),
 		Expr:                   plan2.DeepCopyExpr(filterExpr),
 		RuntimeFilterSpecs:     n.RuntimeFilterProbeList,
-		OrderBy:                n.OrderBy,
 	}
 	s.Proc = process.NewWithAnalyze(c.proc, c.ctx, 0, c.anal.Nodes())
 
