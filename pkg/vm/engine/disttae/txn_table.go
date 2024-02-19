@@ -1624,7 +1624,7 @@ func (tbl *txnTable) EnhanceDelete(bat *batch.Batch, name string) error {
 
 // TODO:: do prefetch read and parallel compaction
 func (tbl *txnTable) mergeCompaction(
-	compactedBlks map[objectio.ObjectLocation][]int64) ([]objectio.BlockInfo, []objectio.ObjectStats, error) {
+	compactedBlks map[objectio.BlockInfo][]int64) ([]objectio.BlockInfo, []objectio.ObjectStats, error) {
 	s3writer := &colexec.S3Writer{}
 	s3writer.SetTableName(tbl.tableName)
 	s3writer.SetSchemaVer(tbl.version)
@@ -1646,11 +1646,11 @@ func (tbl *txnTable) mergeCompaction(
 	}
 	s3writer.SetSeqnums(tbl.seqnums)
 
-	for blkmetaloc, deletes := range compactedBlks {
+	for blk, deletes := range compactedBlks {
 		//blk.MetaLocation()
 		bat, e := blockio.BlockCompactionRead(
 			tbl.db.txn.proc.Ctx,
-			blkmetaloc[:],
+			blk.MetaLocation(),
 			deletes,
 			tbl.seqnums,
 			tbl.typs,
