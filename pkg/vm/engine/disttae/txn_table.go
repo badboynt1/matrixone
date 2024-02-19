@@ -667,10 +667,10 @@ func (tbl *txnTable) Ranges(ctx context.Context, exprs []*plan.Expr) (ranges eng
 func (tbl *txnTable) rangesOnePart(
 	ctx context.Context,
 	state *logtailreplay.PartitionState, // snapshot state of this transaction
-	tableDef *plan.TableDef, // table definition (schema)
-	exprs []*plan.Expr, // filter expression
-	blocks *objectio.BlockInfoSlice, // output marshaled block list after filtering
-	proc *process.Process, // process of this transaction
+	tableDef *plan.TableDef,             // table definition (schema)
+	exprs []*plan.Expr,                  // filter expression
+	blocks *objectio.BlockInfoSlice,     // output marshaled block list after filtering
+	proc *process.Process,               // process of this transaction
 ) (err error) {
 	if tbl.db.txn.op.Txn().IsRCIsolation() {
 		state, err := tbl.getPartitionState(tbl.proc.Load().Ctx)
@@ -1878,6 +1878,7 @@ func (tbl *txnTable) newBlockReader(
 		return rds, nil
 	}
 
+	infos, steps := groupBlocksToObjects(blkInfos, num)
 	fs, err := fileservice.Get[fileservice.FileService](
 		tbl.db.txn.engine.fs,
 		defines.SharedFileServiceName)
@@ -1885,7 +1886,6 @@ func (tbl *txnTable) newBlockReader(
 		return nil, err
 	}
 
-	infos, steps := groupBlocksToObjects(blkInfos, num)
 	blockReaders := newBlockReaders(
 		ctx,
 		fs,
