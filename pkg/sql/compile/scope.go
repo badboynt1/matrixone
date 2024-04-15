@@ -17,8 +17,6 @@ package compile
 import (
 	"context"
 	"fmt"
-	"github.com/matrixorigin/matrixone/pkg/sql/colexec"
-	plan2 "github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"hash/crc32"
 	goruntime "runtime"
 	"runtime/debug"
@@ -37,6 +35,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/objectio"
 	pbpipeline "github.com/matrixorigin/matrixone/pkg/pb/pipeline"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
+	"github.com/matrixorigin/matrixone/pkg/sql/colexec"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/connector"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/group"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/limit"
@@ -46,11 +45,13 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/mergeoffset"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/mergetop"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/offset"
+	"github.com/matrixorigin/matrixone/pkg/sql/colexec/restrict"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/right"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/rightanti"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/rightsemi"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/sample"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/top"
+	plan2 "github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"github.com/matrixorigin/matrixone/pkg/sql/util"
 	"github.com/matrixorigin/matrixone/pkg/vm"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine"
@@ -109,16 +110,24 @@ func (s *Scope) Run(c *Compile) (err error) {
 	s.Proc.Ctx = context.WithValue(s.Proc.Ctx, defines.EngineKey{}, c.e)
 	// DataSource == nil specify the empty scan
 	if s.DataSource == nil {
-		p = pipeline.New(nil, s.Instructions, s.Reg)
+		p = pipeline.New(0, nil, s.Instructions, s.Reg)
 		if _, err = p.ConstRun(nil, s.Proc); err != nil {
 			return err
 		}
 	} else {
-		p = pipeline.New(s.DataSource.Attributes, s.Instructions, s.Reg)
+		id := uint64(0)
+		if s.DataSource.TableDef != nil {
+			id = s.DataSource.TableDef.TblId
+		}
+		p = pipeline.New(id, s.DataSource.Attributes, s.Instructions, s.Reg)
 		if s.DataSource.Bat != nil {
 			_, err = p.ConstRun(s.DataSource.Bat, s.Proc)
 		} else {
-			_, err = p.Run(s.DataSource.R, s.Proc)
+			var tag int32
+			if s.DataSource.node != nil && len(s.DataSource.node.RecvMsgList) > 0 {
+				tag = s.DataSource.node.RecvMsgList[0].MsgTag
+			}
+			_, err = p.Run(s.DataSource.R, tag, s.Proc)
 		}
 	}
 
@@ -251,7 +260,7 @@ func (s *Scope) RemoteRun(c *Compile) error {
 			zap.String("local-address", c.addr),
 			zap.String("remote-address", s.NodeInfo.Addr))
 
-	p := pipeline.New(nil, s.Instructions, s.Reg)
+	p := pipeline.New(0, nil, s.Instructions, s.Reg)
 	err := s.remoteRun(c)
 	select {
 	case <-s.Proc.Ctx.Done():
@@ -281,55 +290,68 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 	var err error
 	var inExprList []*plan.Expr
 	exprs := make([]*plan.Expr, 0, len(s.DataSource.RuntimeFilterSpecs))
-	filters := make([]*pbpipeline.RuntimeFilter, 0, len(exprs))
+	filters := make([]process.RuntimeFilterMessage, 0, len(exprs))
 
 	if len(s.DataSource.RuntimeFilterSpecs) > 0 {
 		for _, spec := range s.DataSource.RuntimeFilterSpecs {
-			c.lock.RLock()
-			receiver, ok := c.runtimeFilterReceiverMap[spec.Tag]
-			c.lock.RUnlock()
-			if !ok {
-				continue
-			}
-
-		FOR_LOOP:
-			for i := 0; i < receiver.size; i++ {
-				select {
-				case <-s.Proc.Ctx.Done():
-					return nil
-
-				case filter := <-receiver.ch:
-					switch filter.Typ {
-					case pbpipeline.RuntimeFilter_PASS:
-						continue
-
-					case pbpipeline.RuntimeFilter_DROP:
-						exprs = nil
-						// FIXME: Should give an empty "Data" and then early return
-						s.NodeInfo.Data = nil
-						s.NodeInfo.Data = append(s.NodeInfo.Data, objectio.EmptyBlockInfoBytes...)
-						s.NodeInfo.NeedExpandRanges = false
-						break FOR_LOOP
-
-					case pbpipeline.RuntimeFilter_IN:
-						inExpr := plan2.MakeInExpr(spec.Expr, filter.Card, filter.Data)
-						inExprList = append(inExprList, inExpr)
-
-						// TODO: implement BETWEEN expression
-					}
-					exprs = append(exprs, spec.Expr)
-					filters = append(filters, filter)
+			msgReceiver := c.proc.NewMessageReceiver([]int32{spec.Tag}, process.AddrBroadCastOnCurrentCN())
+			msgs := msgReceiver.ReceiveMessage(true)
+			for i := range msgs {
+				msg, ok := msgs[i].(process.RuntimeFilterMessage)
+				if !ok {
+					panic("expect runtime filter message, receive unknown message!")
 				}
+				switch msg.Typ {
+				case process.RuntimeFilter_PASS:
+					continue
+				case process.RuntimeFilter_DROP:
+					// FIXME: Should give an empty "Data" and then early return
+					s.NodeInfo.Data = nil
+					s.NodeInfo.NeedExpandRanges = false
+					s.DataSource.FilterExpr = plan2.MakeFalseExpr()
+					return nil
+				case process.RuntimeFilter_IN:
+					inExpr := plan2.MakeInExpr(c.ctx, spec.Expr, msg.Card, msg.Data, spec.MatchPrefix)
+					inExprList = append(inExprList, inExpr)
+
+					// TODO: implement BETWEEN expression
+				}
+				exprs = append(exprs, spec.Expr)
+				filters = append(filters, msg)
 			}
+			msgReceiver.Free()
 		}
 	}
 
-	if len(inExprList) > 0 {
-		newExprList := plan2.DeepCopyExprList(inExprList)
+	for i := range inExprList {
+		fn := inExprList[i].GetF()
+		col := fn.Args[0].GetCol()
+		if col == nil {
+			panic("only support col in runtime filter's left child!")
+		}
+
+		newExpr := plan2.DeepCopyExpr(inExprList[i])
+		//put expr in reader
+		newExprList := []*plan.Expr{newExpr}
 		if s.DataSource.FilterExpr != nil {
 			newExprList = append(newExprList, s.DataSource.FilterExpr)
 		}
 		s.DataSource.FilterExpr = colexec.RewriteFilterExprList(newExprList)
+
+		isFilterOnPK := s.DataSource.TableDef.Pkey != nil && col.Name == s.DataSource.TableDef.Pkey.PkeyColName
+		if !isFilterOnPK {
+			// put expr in filter instruction
+			ins := s.Instructions[0]
+			arg, ok := ins.Arg.(*restrict.Argument)
+			if !ok {
+				panic("missing instruction for runtime filter!")
+			}
+			newExprList := []*plan.Expr{newExpr}
+			if arg.E != nil {
+				newExprList = append(newExprList, arg.E)
+			}
+			arg.E = colexec.RewriteFilterExprList(newExprList)
+		}
 	}
 
 	if s.NodeInfo.NeedExpandRanges {
@@ -340,8 +362,7 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 		if len(s.DataSource.node.BlockFilterList) > 0 {
 			newExprList = append(newExprList, s.DataSource.node.BlockFilterList...)
 		}
-		s.DataSource.node.BlockFilterList = newExprList
-		ranges, err := c.expandRanges(s.DataSource.node, s.NodeInfo.Rel)
+		ranges, err := c.expandRanges(s.DataSource.node, s.NodeInfo.Rel, newExprList)
 		if err != nil {
 			return err
 		}
@@ -382,7 +403,7 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 
 	switch {
 	case remote:
-		if s.DataSource.OrderBy != nil {
+		if len(s.DataSource.OrderBy) > 0 {
 			panic("ordered scan can't run on remote CN!")
 		}
 		ctx := c.ctx
@@ -413,11 +434,11 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 		default:
 			mcpu = 1
 		}
-		if s.DataSource.OrderBy != nil {
+		if len(s.DataSource.OrderBy) > 0 {
 			// ordered scan must run on only one parallel!
 			mcpu = 1
 		}
-		if rds, err = s.NodeInfo.Rel.NewReader(c.ctx, mcpu, s.DataSource.FilterExpr, s.NodeInfo.Data, s.DataSource.OrderBy != nil); err != nil {
+		if rds, err = s.NodeInfo.Rel.NewReader(c.ctx, mcpu, s.DataSource.FilterExpr, s.NodeInfo.Data, len(s.DataSource.OrderBy) > 0); err != nil {
 			return err
 		}
 		s.NodeInfo.Data = nil
@@ -457,7 +478,7 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 		default:
 			mcpu = 1
 		}
-		if s.DataSource.OrderBy != nil {
+		if len(s.DataSource.OrderBy) > 0 {
 			// ordered scan must run on only one parallel!
 			mcpu = 1
 		}
@@ -468,7 +489,7 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 				mcpu,
 				s.DataSource.FilterExpr,
 				s.NodeInfo.Data,
-				s.DataSource.OrderBy != nil)
+				len(s.DataSource.OrderBy) > 0)
 			if err != nil {
 				return err
 			}
@@ -500,7 +521,7 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 					mcpu,
 					s.DataSource.FilterExpr,
 					cleanRanges,
-					s.DataSource.OrderBy != nil)
+					len(s.DataSource.OrderBy) > 0)
 				if err != nil {
 					return err
 				}
@@ -513,7 +534,7 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 				if err != nil {
 					return err
 				}
-				memRds, err := subrel.NewReader(c.ctx, mcpu, s.DataSource.FilterExpr, dirtyRanges[num], s.DataSource.OrderBy != nil)
+				memRds, err := subrel.NewReader(c.ctx, mcpu, s.DataSource.FilterExpr, dirtyRanges[num], len(s.DataSource.OrderBy) > 0)
 				if err != nil {
 					return err
 				}
@@ -540,7 +561,7 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 		return s.Run(c)
 	}
 
-	if s.DataSource.OrderBy != nil {
+	if len(s.DataSource.OrderBy) > 0 {
 		panic("ordered scan must run on only one parallel!")
 	}
 	ss := make([]*Scope, mcpu)
@@ -706,14 +727,13 @@ func newParallelScope(c *Compile, s *Scope, ss []*Scope) (*Scope, error) {
 				MaxParallel: 1,
 			}
 			for j := range ss {
+				newarg := top.NewArgument().WithFs(arg.Fs).WithLimit(arg.Limit)
+				newarg.TopValueTag = arg.TopValueTag
 				ss[j].appendInstruction(vm.Instruction{
-					Op:      vm.Top,
-					Idx:     in.Idx,
-					IsFirst: in.IsFirst,
-					Arg: top.NewArgument().
-						WithFs(arg.Fs).
-						WithLimit(arg.Limit),
-
+					Op:          vm.Top,
+					Idx:         in.Idx,
+					IsFirst:     in.IsFirst,
+					Arg:         newarg,
 					CnAddr:      in.CnAddr,
 					OperatorID:  in.OperatorID,
 					MaxParallel: int32(len(ss)),

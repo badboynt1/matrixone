@@ -18,8 +18,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/sql/colexec/indexjoin"
 	"time"
 	"unsafe"
+
+	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
 
 	"github.com/google/uuid"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
@@ -37,7 +40,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/objectio"
 	"github.com/matrixorigin/matrixone/pkg/pb/pipeline"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
-	"github.com/matrixorigin/matrixone/pkg/queryservice"
+	qclient "github.com/matrixorigin/matrixone/pkg/queryservice/client"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/agg"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/anti"
@@ -111,7 +114,7 @@ func CnServerMessageHandler(
 	storeEngine engine.Engine,
 	fileService fileservice.FileService,
 	lockService lockservice.LockService,
-	queryService queryservice.QueryService,
+	queryClient qclient.QueryClient,
 	hakeeper logservice.CNHAKeeperClient,
 	udfService udf.Service,
 	cli client.TxnClient,
@@ -125,6 +128,10 @@ func CnServerMessageHandler(
 			err = errors.Join(err, cs.Close())
 		}
 	}()
+	start := time.Now()
+	defer func() {
+		v2.PipelineServerDurationHistogram.Observe(time.Since(start).Seconds())
+	}()
 
 	msg, ok := message.(*pipeline.Message)
 	if !ok {
@@ -133,7 +140,7 @@ func CnServerMessageHandler(
 	}
 
 	receiver := newMessageReceiverOnServer(ctx, cnAddr, msg,
-		cs, messageAcquirer, storeEngine, fileService, lockService, queryService, hakeeper, udfService, cli, aicm)
+		cs, messageAcquirer, storeEngine, fileService, lockService, queryClient, hakeeper, udfService, cli, aicm)
 
 	// rebuild pipeline to run and send the query result back.
 	err = cnMessageHandle(&receiver)
@@ -734,16 +741,18 @@ func convertToPipelineInstruction(opr *vm.Instruction, ctx *scopeContext, ctxId 
 		}
 	case *onduplicatekey.Argument:
 		in.OnDuplicateKey = &pipeline.OnDuplicateKey{
-			TableDef:        t.TableDef,
-			OnDuplicateIdx:  t.OnDuplicateIdx,
-			OnDuplicateExpr: t.OnDuplicateExpr,
+			Attrs:              t.Attrs,
+			InsertColCount:     t.InsertColCount,
+			UniqueColCheckExpr: t.UniqueColCheckExpr,
+			UniqueCols:         t.UniqueCols,
+			OnDuplicateIdx:     t.OnDuplicateIdx,
+			OnDuplicateExpr:    t.OnDuplicateExpr,
 		}
 	case *fuzzyfilter.Argument:
 		in.FuzzyFilter = &pipeline.FuzzyFilter{
-			N:                      float32(t.N),
-			PkName:                 t.PkName,
-			PkTyp:                  plan2.DeepCopyType(t.PkTyp),
-			RuntimeFilterBuildList: t.RuntimeFilterSpecs,
+			N:      float32(t.N),
+			PkName: t.PkName,
+			PkTyp:  plan2.DeepCopyType(t.PkTyp),
 		}
 	case *preinsert.Argument:
 		in.PreInsert = &pipeline.PreInsert{
@@ -977,6 +986,12 @@ func convertToPipelineInstruction(opr *vm.Instruction, ctx *scopeContext, ctxId 
 			HashOnPk:               t.HashOnPK,
 			IsShuffle:              t.IsShuffle,
 		}
+	case *indexjoin.Argument:
+		in.IndexJoin = &pipeline.IndexJoin{
+			Result:                 t.Result,
+			Types:                  convertToPlanTypes(t.Typs),
+			RuntimeFilterBuildList: t.RuntimeFilterSpecs,
+		}
 	case *single.Argument:
 		relList, colList := getRelColList(t.Result)
 		in.SingleJoin = &pipeline.SingleJoin{
@@ -1179,7 +1194,10 @@ func convertToVmInstruction(opr *pipeline.Instruction, ctx *scopeContext, eng en
 	case vm.OnDuplicateKey:
 		t := opr.GetOnDuplicateKey()
 		arg := onduplicatekey.NewArgument()
-		arg.TableDef = t.TableDef
+		arg.Attrs = t.Attrs
+		arg.InsertColCount = t.InsertColCount
+		arg.UniqueColCheckExpr = t.UniqueColCheckExpr
+		arg.UniqueCols = t.UniqueCols
 		arg.OnDuplicateIdx = t.OnDuplicateIdx
 		arg.OnDuplicateExpr = t.OnDuplicateExpr
 		arg.IsIgnore = t.IsIgnore
@@ -1190,7 +1208,6 @@ func convertToVmInstruction(opr *pipeline.Instruction, ctx *scopeContext, eng en
 		arg.N = float64(t.N)
 		arg.PkName = t.PkName
 		arg.PkTyp = t.PkTyp
-		arg.RuntimeFilterSpecs = t.RuntimeFilterBuildList
 		v.Arg = arg
 	case vm.Anti:
 		t := opr.GetAnti()
@@ -1367,6 +1384,13 @@ func convertToVmInstruction(opr *pipeline.Instruction, ctx *scopeContext, eng en
 		arg.Result = t.Result
 		arg.Cond = t.Expr
 		arg.Typs = convertToTypes(t.Types)
+		v.Arg = arg
+	case vm.IndexJoin:
+		t := opr.GetIndexJoin()
+		arg := indexjoin.NewArgument()
+		arg.Result = t.Result
+		arg.Typs = convertToTypes(t.Types)
+		arg.RuntimeFilterSpecs = t.RuntimeFilterBuildList
 		v.Arg = arg
 	case vm.LoopSingle:
 		t := opr.GetSingleJoin()

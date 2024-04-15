@@ -71,6 +71,8 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/sql/plan/function"
 	"github.com/matrixorigin/matrixone/pkg/sql/util"
 	mokafka "github.com/matrixorigin/matrixone/pkg/stream/adapter/kafka"
+	"github.com/matrixorigin/matrixone/pkg/txn/client"
+	txnTrace "github.com/matrixorigin/matrixone/pkg/txn/trace"
 	util2 "github.com/matrixorigin/matrixone/pkg/util"
 	"github.com/matrixorigin/matrixone/pkg/util/executor"
 	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
@@ -115,12 +117,16 @@ func NewCompile(
 	c.uid = uid
 	c.sql = sql
 	c.proc = proc
+	c.proc.MessageBoard = c.MessageBoard
 	c.stmt = stmt
 	c.addr = addr
 	c.isInternal = isInternal
 	c.cnLabel = cnLabel
 	c.startAt = startAt
 	c.disableRetry = false
+	if c.proc.TxnOperator != nil {
+		c.proc.TxnOperator.GetWorkspace().UpdateSnapshotWriteOffset()
+	}
 	return c
 }
 
@@ -145,11 +151,12 @@ func (c *Compile) reset() {
 	for i := range c.createdFuzzy {
 		c.createdFuzzy[i].release()
 	}
+
+	c.MessageBoard.Messages = c.MessageBoard.Messages[:0]
 	c.createdFuzzy = c.createdFuzzy[:0]
 	c.scope = c.scope[:0]
 	c.proc.CleanValueScanBatchs()
 	c.pn = nil
-	c.u = nil
 	c.fill = nil
 	c.affectRows.Store(0)
 	c.addr = ""
@@ -157,6 +164,7 @@ func (c *Compile) reset() {
 	c.tenant = ""
 	c.uid = ""
 	c.sql = ""
+	c.originSQL = ""
 	c.anal = nil
 	c.e = nil
 	c.ctx = nil
@@ -180,11 +188,6 @@ func (c *Compile) reset() {
 	}
 	for k := range c.cnLabel {
 		delete(c.cnLabel, k)
-	}
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	for k := range c.runtimeFilterReceiverMap {
-		delete(c.runtimeFilterReceiverMap, k)
 	}
 }
 
@@ -215,7 +218,7 @@ func (c *Compile) SetTempEngine(ctx context.Context, te engine.Engine) {
 
 // Compile is the entrance of the compute-execute-layer.
 // It generates a scope (logic pipeline) for a query plan.
-func (c *Compile) Compile(ctx context.Context, pn *plan.Plan, u any, fill func(any, *batch.Batch) error) (err error) {
+func (c *Compile) Compile(ctx context.Context, pn *plan.Plan, fill func(*batch.Batch) error) (err error) {
 	start := time.Now()
 	defer func() {
 		v2.TxnStatementCompileDurationHistogram.Observe(time.Since(start).Seconds())
@@ -233,6 +236,25 @@ func (c *Compile) Compile(ctx context.Context, pn *plan.Plan, u any, fill func(a
 	}()
 
 	if c.proc.TxnOperator != nil && c.proc.TxnOperator.Txn().IsPessimistic() {
+		txnOp := c.proc.TxnOperator
+		seq := txnOp.NextSequence()
+		txnTrace.GetService().AddTxnDurationAction(
+			txnOp,
+			client.CompileEvent,
+			seq,
+			0,
+			0,
+			err)
+		defer func() {
+			txnTrace.GetService().AddTxnDurationAction(
+				txnOp,
+				client.CompileEvent,
+				seq,
+				0,
+				time.Since(start),
+				err)
+		}()
+
 		if qry, ok := pn.Plan.(*plan.Plan_Query); ok {
 			if qry.Query.StmtType == plan.Query_SELECT {
 				for _, n := range qry.Query.Nodes {
@@ -253,7 +275,6 @@ func (c *Compile) Compile(ctx context.Context, pn *plan.Plan, u any, fill func(a
 
 	// session info and callback function to write back query result.
 	// XXX u is really a bad name, I'm not sure if `session` or `user` will be more suitable.
-	c.u = u
 	c.fill = fill
 
 	c.pn = pn
@@ -392,7 +413,26 @@ func (c *Compile) allocOperatorID() int32 {
 }
 
 // Run is an important function of the compute-layer, it executes a single sql according to its scope
+// Need call Release() after call this function.
 func (c *Compile) Run(_ uint64) (result *util2.RunResult, err error) {
+	sql := c.originSQL
+	if sql == "" {
+		sql = c.sql
+	}
+
+	txnOp := c.proc.TxnOperator
+	seq := uint64(0)
+	if txnOp != nil {
+		seq = txnOp.NextSequence()
+		txnOp.EnterRunSql()
+	}
+
+	defer func() {
+		if txnOp != nil {
+			txnOp.ExitRunSql()
+		}
+	}()
+
 	var writeOffset uint64
 
 	start := time.Now()
@@ -401,9 +441,13 @@ func (c *Compile) Run(_ uint64) (result *util2.RunResult, err error) {
 	stats := statistic.StatsInfoFromContext(c.proc.Ctx)
 	stats.ExecutionStart()
 
+	txnTrace.GetService().TxnStatementStart(txnOp, sql, seq)
 	defer func() {
 		stats.ExecutionEnd()
-		v2.TxnStatementExecuteDurationHistogram.Observe(time.Since(start).Seconds())
+
+		cost := time.Since(start)
+		txnTrace.GetService().TxnStatementCompleted(txnOp, sql, cost, seq, err)
+		v2.TxnStatementExecuteDurationHistogram.Observe(cost.Seconds())
 	}()
 
 	for _, s := range c.scope {
@@ -411,7 +455,7 @@ func (c *Compile) Run(_ uint64) (result *util2.RunResult, err error) {
 	}
 
 	if c.proc.TxnOperator != nil {
-		writeOffset = c.proc.TxnOperator.GetWorkspace().WriteOffset()
+		writeOffset = uint64(c.proc.TxnOperator.GetWorkspace().GetSnapshotWriteOffset())
 	}
 	result = &util2.RunResult{}
 	var span trace.Span
@@ -429,29 +473,6 @@ func (c *Compile) Run(_ uint64) (result *util2.RunResult, err error) {
 	c.ctx, span = trace.Start(c.ctx, "Compile.Run", trace.WithKind(trace.SpanKindStatement))
 	_, task := gotrace.NewTask(context.TODO(), "pipeline.Run")
 	defer func() {
-		// fuzzy filter not sure whether this insert / load obey duplicate constraints, need double check
-		if runC != nil {
-			if runC.fuzzy != nil && runC.fuzzy.cnt > 0 && err == nil {
-				err = runC.fuzzy.backgroundSQLCheck(runC)
-			}
-
-			//detect fk self refer
-			//update, insert
-			query := c.pn.GetQuery()
-			if err == nil && query != nil && (query.StmtType == plan.Query_INSERT ||
-				query.StmtType == plan.Query_UPDATE) && len(query.GetDetectSqls()) != 0 {
-				err = detectFkSelfRefer(runC, query.DetectSqls)
-			}
-			//alter table ... add/drop foreign key
-			if err == nil && c.pn.GetDdl() != nil {
-				alterTable := c.pn.GetDdl().GetAlterTable()
-				if alterTable != nil && len(alterTable.GetDetectSqls()) != 0 {
-					err = detectFkSelfRefer(runC, alterTable.GetDetectSqls())
-				}
-			}
-		}
-
-		c.Release()
 		releaseRunC()
 
 		task.End()
@@ -528,7 +549,7 @@ func (c *Compile) prepareRetry(defChanged bool) (*Compile, error) {
 		}
 		c.pn = pn
 	}
-	if e = runC.Compile(c.proc.Ctx, c.pn, c.u, c.fill); e != nil {
+	if e = runC.Compile(c.proc.Ctx, c.pn, c.fill); e != nil {
 		return nil, e
 	}
 
@@ -550,7 +571,7 @@ func (c *Compile) canRetry(err error) bool {
 // run once
 func (c *Compile) runOnce() error {
 	var wg sync.WaitGroup
-
+	c.MessageBoard.Reset()
 	err := c.lockMetaTables()
 	if err != nil {
 		return err
@@ -559,6 +580,7 @@ func (c *Compile) runOnce() error {
 	for _, s := range c.scope {
 		s.SetContextRecursively(c.proc.Ctx)
 	}
+
 	for i := range c.scope {
 		wg.Add(1)
 		scope := c.scope[i]
@@ -593,11 +615,39 @@ func (c *Compile) runOnce() error {
 		}
 	}
 
-	if len(errList) == 0 {
-		return nil
-	} else {
-		return errList[0]
+	if len(errList) > 0 {
+		err = errList[0]
 	}
+	if err != nil {
+		return err
+	}
+
+	// fuzzy filter not sure whether this insert / load obey duplicate constraints, need double check
+	if c.fuzzy != nil && c.fuzzy.cnt > 0 {
+		if c.fuzzy.cnt > 10 {
+			logutil.Warnf("fuzzy filter cnt is %d, may be too high", c.fuzzy.cnt)
+		}
+		err = c.fuzzy.backgroundSQLCheck(c)
+	}
+	if err != nil {
+		return err
+	}
+
+	//detect fk self refer
+	//update, insert
+	query := c.pn.GetQuery()
+	if query != nil && (query.StmtType == plan.Query_INSERT ||
+		query.StmtType == plan.Query_UPDATE) && len(query.GetDetectSqls()) != 0 {
+		err = detectFkSelfRefer(c, query.DetectSqls)
+	}
+	//alter table ... add/drop foreign key
+	if err == nil && c.pn.GetDdl() != nil {
+		alterTable := c.pn.GetDdl().GetAlterTable()
+		if alterTable != nil && len(alterTable.GetDetectSqls()) != 0 {
+			err = detectFkSelfRefer(c, alterTable.GetDetectSqls())
+		}
+	}
+	return err
 }
 
 // shouldReturnCtxErr return true only if the ctx has error and the error is not canceled.
@@ -817,10 +867,10 @@ func (c *Compile) getCNList() (engine.Nodes, error) {
 	}
 
 	// We should always make sure the current CN is contained in the cn list.
-	if c.proc == nil || c.proc.QueryService == nil {
+	if c.proc == nil || c.proc.QueryClient == nil {
 		return cnList, nil
 	}
-	cnID := c.proc.QueryService.ServiceID()
+	cnID := c.proc.QueryClient.ServiceID()
 	for _, node := range cnList {
 		if node.Id == cnID {
 			return cnList, nil
@@ -1006,7 +1056,6 @@ func (c *Compile) compileApQuery(qry *plan.Query, ss []*Scope, step int32) (*Sco
 		rs.Instructions = append(rs.Instructions, vm.Instruction{
 			Op: vm.Output,
 			Arg: output.NewArgument().
-				WithData(c.u).
 				WithFunc(c.fill),
 		})
 	}
@@ -1108,9 +1157,13 @@ func (c *Compile) compilePlanScope(ctx context.Context, step int32, curNodeIdx i
 		if err != nil {
 			return nil, err
 		}
-
-		// RelationName
-		ss = c.compileSort(n, c.compileProjection(n, c.compileRestrict(n, ss)))
+		ss = c.compileProjection(n, c.compileRestrict(n, ss))
+		if n.Offset != nil {
+			ss = c.compileOffset(n, ss)
+		}
+		if n.Limit != nil {
+			ss = c.compileLimit(n, ss)
+		}
 		return ss, nil
 	case plan.Node_SOURCE_SCAN:
 		ss, err = c.compileSourceScan(ctx, n)
@@ -1557,7 +1610,7 @@ func (c *Compile) compilePlanScope(ctx context.Context, step int32, curNodeIdx i
 		currentFirstFlag := c.anal.isFirst
 		for i := range ss {
 			var lockOpArg *lockop.Argument
-			lockOpArg, err = constructLockOp(n, ss[i].Proc, c.e)
+			lockOpArg, err = constructLockOp(n, c.e)
 			if err != nil {
 				return nil, err
 			}
@@ -2133,11 +2186,16 @@ func (c *Compile) compileTableScanWithNode(n *plan.Node, node engine.Node) (*Sco
 }
 
 func (c *Compile) compileRestrict(n *plan.Node, ss []*Scope) []*Scope {
-	if len(n.FilterList) == 0 {
+	if len(n.FilterList) == 0 && len(n.RuntimeFilterProbeList) == 0 {
 		return ss
 	}
 	currentFirstFlag := c.anal.isFirst
-	filterExpr := colexec.RewriteFilterExprList(n.FilterList)
+	// for dynamic parameter, substitute param ref and const fold cast expression here to improve performance
+	newFilters, err := plan2.ConstandFoldList(n.FilterList, c.proc, true)
+	if err != nil {
+		newFilters = n.FilterList
+	}
+	filterExpr := colexec.RewriteFilterExprList(newFilters)
 	for i := range ss {
 		ss[i].appendInstruction(vm.Instruction{
 			Op:      vm.Restrict,
@@ -2251,12 +2309,12 @@ func (c *Compile) compileShuffleJoin(ctx context.Context, node, left, right *pla
 
 	rightTyps := make([]types.Type, len(right.ProjectList))
 	for i, expr := range right.ProjectList {
-		rightTyps[i] = dupType(expr.Typ)
+		rightTyps[i] = dupType(&expr.Typ)
 	}
 
 	leftTyps := make([]types.Type, len(left.ProjectList))
 	for i, expr := range left.ProjectList {
-		leftTyps[i] = dupType(expr.Typ)
+		leftTyps[i] = dupType(&expr.Typ)
 	}
 
 	parent, children := c.newShuffleJoinScopeList(lefts, rights, node)
@@ -2357,12 +2415,12 @@ func (c *Compile) compileBroadcastJoin(ctx context.Context, node, left, right *p
 
 	rightTyps := make([]types.Type, len(right.ProjectList))
 	for i, expr := range right.ProjectList {
-		rightTyps[i] = dupType(expr.Typ)
+		rightTyps[i] = dupType(&expr.Typ)
 	}
 
 	leftTyps := make([]types.Type, len(left.ProjectList))
 	for i, expr := range left.ProjectList {
-		leftTyps[i] = dupType(expr.Typ)
+		leftTyps[i] = dupType(&expr.Typ)
 	}
 
 	switch node.JoinType {
@@ -2393,6 +2451,17 @@ func (c *Compile) compileBroadcastJoin(ctx context.Context, node, left, right *p
 				}
 			}
 		}
+
+	case plan.Node_INDEX:
+		rs = c.newBroadcastJoinScopeList(ss, children, node)
+		for i := range rs {
+			rs[i].appendInstruction(vm.Instruction{
+				Op:  vm.IndexJoin,
+				Idx: c.anal.curr,
+				Arg: constructIndexJoin(node, rightTyps, c.proc),
+			})
+		}
+
 	case plan.Node_SEMI:
 		if isEq {
 			if node.BuildOnLeft {
@@ -2683,7 +2752,7 @@ func (c *Compile) compileTimeWin(n *plan.Node, ss []*Scope) []*Scope {
 	rs.Instructions[0] = vm.Instruction{
 		Op:  vm.TimeWin,
 		Idx: c.anal.curr,
-		Arg: constructTimeWindow(c.ctx, n, c.proc),
+		Arg: constructTimeWindow(c.ctx, n),
 	}
 	return []*Scope{rs}
 }
@@ -2752,7 +2821,7 @@ func (c *Compile) compileFuzzyFilter(n *plan.Node, ns []*plan.Node, left []*Scop
 
 	rs.Instructions[0].Idx = c.anal.curr
 
-	arg := constructFuzzyFilter(c, n, ns[n.Children[0]], ns[n.Children[1]])
+	arg := constructFuzzyFilter(c, n, ns[n.Children[1]])
 
 	rs.appendInstruction(vm.Instruction{
 		Op:  vm.FuzzyFilter,
@@ -2770,13 +2839,12 @@ func (c *Compile) compileFuzzyFilter(n *plan.Node, ns []*plan.Node, left []*Scop
 	rs.appendInstruction(vm.Instruction{
 		Op: vm.Output,
 		Arg: output.NewArgument().
-			WithData(outData).
 			WithFunc(
-				func(data any, bat *batch.Batch) error {
+				func(bat *batch.Batch) error {
 					if bat == nil || bat.IsEmpty() {
 						return nil
 					}
-					c.fuzzy = data.(*fuzzyCheck)
+					c.fuzzy = outData
 					// the batch will contain the key that fuzzyCheck
 					if err := c.fuzzy.fill(c.ctx, bat); err != nil {
 						return err
@@ -3039,7 +3107,7 @@ func (c *Compile) newDeleteMergeScope(arg *deletion.Argument, ss []*Scope) *Scop
 		// use distributed delete
 		arg.RemoteDelete = true
 		// maybe just copy only once?
-		arg.SegmentMap = colexec.Srv.GetCnSegmentMap()
+		arg.SegmentMap = colexec.Get().GetCnSegmentMap()
 		arg.IBucket = uint32(i)
 		arg.Nbucket = uint32(len(rs))
 		rs[i].Instructions = append(
@@ -3377,12 +3445,7 @@ func (c *Compile) newJoinBuildScope(s *Scope, ss []*Scope) *Scope {
 		regTransplant(s, rs, i+s.BuildIdx, i)
 	}
 
-	rs.appendInstruction(vm.Instruction{
-		Op:      vm.HashBuild,
-		Idx:     s.Instructions[0].Idx,
-		IsFirst: true,
-		Arg:     constructHashBuild(c, s.Instructions[0], c.proc, s.ShuffleCnt, ss != nil),
-	})
+	rs.appendInstruction(constructJoinBuildInstruction(c, s.Instructions[0], s.ShuffleCnt, ss != nil))
 
 	if ss == nil { // unparallel, send the hashtable to join scope directly
 		s.Proc.Reg.MergeReceivers[s.BuildIdx] = &process.WaitRegister{
@@ -3489,10 +3552,7 @@ func (c *Compile) fillAnalyzeInfo() {
 }
 
 func (c *Compile) determinExpandRanges(n *plan.Node, rel engine.Relation) bool {
-	if c.pn.GetQuery().StmtType != plan.Query_SELECT {
-		return true
-	}
-	if !plan2.InternalTable(n.TableDef) {
+	if plan2.InternalTable(n.TableDef) {
 		return true
 	}
 	if n.TableDef.Partition != nil {
@@ -3513,7 +3573,7 @@ func (c *Compile) determinExpandRanges(n *plan.Node, rel engine.Relation) bool {
 	return false
 }
 
-func (c *Compile) expandRanges(n *plan.Node, rel engine.Relation) (engine.Ranges, error) {
+func (c *Compile) expandRanges(n *plan.Node, rel engine.Relation, blockFilterList []*plan.Expr) (engine.Ranges, error) {
 	var err error
 	var db engine.Database
 	var ranges engine.Ranges
@@ -3532,7 +3592,7 @@ func (c *Compile) expandRanges(n *plan.Node, rel engine.Relation) (engine.Ranges
 	if err != nil {
 		return nil, err
 	}
-	ranges, err = rel.Ranges(ctx, n.BlockFilterList)
+	ranges, err = rel.Ranges(ctx, blockFilterList)
 	if err != nil {
 		return nil, err
 	}
@@ -3636,7 +3696,7 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, []any, []types.T, e
 	}
 
 	if c.determinExpandRanges(n, rel) {
-		ranges, err = c.expandRanges(n, rel)
+		ranges, err = c.expandRanges(n, rel, n.BlockFilterList)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -3846,7 +3906,8 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, []any, []types.T, e
 										}
 									case types.T_TS:
 										min := types.DecodeFixed[types.TS](zm.GetMinBuf())
-										if min.Less(partialResults[i].(types.TS)) {
+										ts := partialResults[i].(types.TS)
+										if min.Less(&ts) {
 											partialResults[i] = min
 										}
 									case types.T_Rowid:
@@ -3972,7 +4033,8 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, []any, []types.T, e
 										}
 									case types.T_TS:
 										max := types.DecodeFixed[types.TS](zm.GetMaxBuf())
-										if max.Greater(partialResults[i].(types.TS)) {
+										ts := partialResults[i].(types.TS)
+										if max.Greater(&ts) {
 											partialResults[i] = max
 										}
 									case types.T_Rowid:
@@ -4044,7 +4106,7 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, []any, []types.T, e
 	}
 	// for multi cn in launch mode, put all payloads in current CN, maybe delete this in the future
 	// for an ordered scan, put all paylonds in current CN
-	if isLaunchMode(c.cnList) || n.OrderBy != nil {
+	if isLaunchMode(c.cnList) || len(n.OrderBy) > 0 {
 		return putBlocksInCurrentCN(c, ranges.GetAllBytes(), rel, n), partialResults, partialResultTypes, nil
 	}
 	// disttae engine
@@ -4421,11 +4483,6 @@ func (c *Compile) fatalLog(retry int, err error) {
 	if err == nil {
 		return
 	}
-	v, ok := moruntime.ProcessLevelRuntime().
-		GetGlobalVariables(moruntime.EnableCheckInvalidRCErrors)
-	if !ok || !v.(bool) {
-		return
-	}
 	fatal := moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetry) ||
 		moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetryWithDefChanged) ||
 		moerr.IsMoErrCode(err, moerr.ErrTxnWWConflict) ||
@@ -4435,9 +4492,18 @@ func (c *Compile) fatalLog(retry int, err error) {
 	if !fatal {
 		return
 	}
+
 	if retry == 0 &&
 		(moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetry) ||
 			moerr.IsMoErrCode(err, moerr.ErrTxnNeedRetryWithDefChanged)) {
+		return
+	}
+
+	txnTrace.GetService().TxnError(c.proc.TxnOperator, err)
+
+	v, ok := moruntime.ProcessLevelRuntime().
+		GetGlobalVariables(moruntime.EnableCheckInvalidRCErrors)
+	if !ok || !v.(bool) {
 		return
 	}
 
@@ -4445,6 +4511,10 @@ func (c *Compile) fatalLog(retry int, err error) {
 		hex.EncodeToString(c.proc.TxnOperator.Txn().ID),
 		retry,
 		err.Error())
+}
+
+func (c *Compile) SetOriginSQL(sql string) {
+	c.originSQL = sql
 }
 
 func (c *Compile) SetBuildPlanFunc(buildPlanFunc func() (*plan2.Plan, error)) {
@@ -4481,6 +4551,28 @@ func runDetectSql(c *Compile, sql string) error {
 			yes := vector.GetFixedAt[bool](vs[0], 0)
 			if !yes {
 				return moerr.NewErrFKNoReferencedRow2(c.ctx)
+			}
+		}
+	}
+	return nil
+}
+
+// runDetectFkReferToDBSql runs the fk detecting sql
+func runDetectFkReferToDBSql(c *Compile, sql string) error {
+	res, err := c.runSqlWithResult(sql)
+	if err != nil {
+		logutil.Errorf("The sql that caused the fk self refer check failed is %s, and generated background sql is %s", c.sql, sql)
+		return err
+	}
+	defer res.Close()
+
+	if res.Batches != nil {
+		vs := res.Batches[0].Vecs
+		if vs != nil && vs[0].Length() > 0 {
+			yes := vector.GetFixedAt[bool](vs[0], 0)
+			if yes {
+				return moerr.NewInternalError(c.ctx,
+					"can not drop database. It has been referenced by foreign keys")
 			}
 		}
 	}

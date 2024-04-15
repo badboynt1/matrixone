@@ -124,7 +124,7 @@ func (pse *PrepareStmtExecutor) ResponseAfterExec(ctx context.Context, ses *Sess
 
 func (pse *PrepareStmtExecutor) ExecuteImpl(ctx context.Context, ses *Session) error {
 	var err error
-	pse.prepareStmt, err = doPrepareStmt(ctx, ses, pse.ps, "")
+	pse.prepareStmt, err = doPrepareStmt(ctx, ses, pse.ps, "", nil)
 	if err != nil {
 		return err
 	}
@@ -197,10 +197,10 @@ type ExecuteExecutor struct {
 	e              *tree.Execute
 }
 
-func (ee *ExecuteExecutor) Compile(requestCtx context.Context, u interface{}, fill func(interface{}, *batch.Batch) error) (interface{}, error) {
+func (ee *ExecuteExecutor) Compile(requestCtx context.Context, fill func(*batch.Batch) error) (interface{}, error) {
 	var err error
 	var ret interface{}
-	ret, err = ee.baseStmtExecutor.Compile(requestCtx, u, fill)
+	ret, err = ee.baseStmtExecutor.Compile(requestCtx, fill)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +300,26 @@ type CreateAccountExecutor struct {
 }
 
 func (cae *CreateAccountExecutor) ExecuteImpl(ctx context.Context, ses *Session) error {
-	return InitGeneralTenant(ctx, ses, cae.ca)
+	ca := cae.ca
+	create := &createAccount{
+		IfNotExists:  ca.IfNotExists,
+		IdentTyp:     ca.AuthOption.IdentifiedType.Typ,
+		StatusOption: ca.StatusOption,
+		Comment:      ca.Comment,
+	}
+
+	b := strParamBinder{
+		ctx:    ctx,
+		params: cae.GetProcess().GetPrepareParams(),
+	}
+	create.Name = b.bind(ca.Name)
+	create.AdminName = b.bind(ca.AuthOption.AdminName)
+	create.IdentStr = b.bindIdentStr(&ca.AuthOption.IdentifiedType)
+	if b.err != nil {
+		return b.err
+	}
+
+	return InitGeneralTenant(ctx, ses, create)
 }
 
 type DropAccountExecutor struct {
@@ -309,7 +328,21 @@ type DropAccountExecutor struct {
 }
 
 func (dae *DropAccountExecutor) ExecuteImpl(ctx context.Context, ses *Session) error {
-	return doDropAccount(ctx, ses, dae.da)
+	da := dae.da
+	drop := &dropAccount{
+		IfExists: da.IfExists,
+	}
+
+	b := strParamBinder{
+		ctx:    ctx,
+		params: dae.GetProcess().GetPrepareParams(),
+	}
+	drop.Name = b.bind(da.Name)
+	if b.err != nil {
+		return b.err
+	}
+
+	return doDropAccount(ctx, ses, drop)
 }
 
 type AlterAccountExecutor struct {
@@ -324,7 +357,38 @@ type CreateUserExecutor struct {
 
 func (cue *CreateUserExecutor) ExecuteImpl(ctx context.Context, ses *Session) error {
 	tenant := ses.GetTenantInfo()
-	return InitUser(ctx, ses, tenant, cue.cu)
+
+	st := cue.cu
+	cu := &createUser{
+		IfNotExists:        st.IfNotExists,
+		Role:               st.Role,
+		Users:              make([]*user, 0, len(st.Users)),
+		MiscOpt:            st.MiscOpt,
+		CommentOrAttribute: st.CommentOrAttribute,
+	}
+
+	for _, u := range st.Users {
+		v := user{
+			Username: u.Username,
+			Hostname: u.Hostname,
+		}
+		if u.AuthOption != nil {
+			v.AuthExist = true
+			v.IdentTyp = u.AuthOption.Typ
+			switch v.IdentTyp {
+			case tree.AccountIdentifiedByPassword,
+				tree.AccountIdentifiedWithSSL:
+				var err error
+				v.IdentStr, err = unboxExprStr(ctx, u.AuthOption.Str)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		cu.Users = append(cu.Users, &v)
+	}
+
+	return InitUser(ctx, ses, tenant, cu)
 }
 
 type DropUserExecutor struct {
@@ -498,7 +562,6 @@ type LoadExecutor struct {
 func (le *LoadExecutor) CommitOrRollbackTxn(ctx context.Context, ses *Session) error {
 	stmt := le.GetAst()
 	tenant := le.tenantName
-	incStatementCounter(tenant, stmt)
 	if le.GetStatus() == stmtExecSuccess {
 		logStatementStatus(ctx, ses, stmt, success, nil)
 	} else {

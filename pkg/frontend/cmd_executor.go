@@ -98,6 +98,10 @@ func (ui *UserInput) genSqlSourceType(ses *Session) {
 		ui.sqlSourceType = append(ui.sqlSourceType, constant.InternalSql)
 		return
 	}
+	if tenant.Tenant == sysAccountName && tenant.User == "internal" {
+		ui.sqlSourceType = append(ui.sqlSourceType, constant.InternalSql)
+		return
+	}
 	for len(sql) > 0 {
 		p1 := strings.Index(sql, "/*")
 		p2 := strings.Index(sql, "*/")
@@ -202,7 +206,7 @@ func Execute(ctx context.Context, ses *Session, proc *process.Process, stmtExec 
 	cmpBegin = time.Now()
 
 	//TODO: selfhandle statements do not need to compile
-	if _, err = stmtExec.Compile(ctx, ses, ses.GetOutputCallback()); err != nil {
+	if _, err = stmtExec.Compile(ctx, ses.GetOutputCallback()); err != nil {
 		goto handleRet
 	}
 
@@ -228,9 +232,9 @@ func Execute(ctx context.Context, ses *Session, proc *process.Process, stmtExec 
 		logInfo(ses, ses.GetDebugString(), fmt.Sprintf("time of Exec.Run : %s", time.Since(runBegin).String()))
 	}
 
+handleRet:
 	_ = stmtExec.RecordExecPlan(ctx)
 
-handleRet:
 	stmtExec.SetStatus(err)
 	err2 = stmtExec.CommitOrRollbackTxn(ctx, ses)
 	if err2 != nil {
@@ -279,7 +283,6 @@ func (bse *baseStmtExecutor) CommitOrRollbackTxn(ctx context.Context, ses *Sessi
 	var txnErr error
 	stmt := bse.GetAst()
 	tenant := bse.tenantName
-	incStatementCounter(tenant, stmt)
 	if bse.GetStatus() == stmtExecSuccess {
 		txnErr = ses.TxnCommitSingleStatement(stmt)
 		if txnErr != nil {
@@ -304,7 +307,7 @@ func (bse *baseStmtExecutor) CommitOrRollbackTxn(ctx context.Context, ses *Sessi
 			ses.SetOptionBits(OPTION_ATTACH_ABORT_TRANSACTION_ERROR)
 		}
 		logError(ses, ses.GetDebugString(), bse.err.Error())
-		txnErr = ses.TxnRollbackSingleStatement(stmt)
+		txnErr = ses.TxnRollbackSingleStatement(stmt, nil)
 		if txnErr != nil {
 			incTransactionErrorsCounter(tenant, metric.SQLTypeRollback)
 			logStatementStatus(ctx, ses, stmt, fail, txnErr)

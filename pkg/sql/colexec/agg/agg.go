@@ -23,8 +23,8 @@ import (
 func NewUnaryAgg[T1, T2 any](
 	overloadID int64,
 	aggPrivateStructure AggStruct,
-	isCount bool, inputTypes,
-	outputType types.Type,
+	isCount bool,
+	inputTypes, outputType types.Type,
 	grows func(int),
 	eval func([]T2) ([]T2, error),
 	merge func(int64, int64, T2, T2, bool, bool, any) (T2, bool, error),
@@ -341,6 +341,7 @@ func (a *UnaryAgg[T1, T2]) Eval(pool *mpool.MPool) (vec *vector.Vector, err erro
 	vec = vector.NewVec(a.outputType)
 	if a.outputType.IsVarlen() {
 		vs := (any)(a.vs).([][]byte)
+
 		if err = vector.AppendBytesList(vec, vs, nullList, pool); err != nil {
 			vec.Free(pool)
 			return nil, err
@@ -365,7 +366,7 @@ func (a *UnaryAgg[T1, T2]) WildAggReAlloc(m *mpool.MPool) error {
 	}
 	copy(d, a.da)
 	a.da = d
-	setAggValues[T1, T2](a, a.outputType)
+	setAggValues[T1, T2](a)
 	return nil
 }
 
@@ -421,7 +422,7 @@ func (a *UnaryAgg[T1, T2]) MarshalBinary() ([]byte, error) {
 		IsCount:    a.isCount,
 	}
 	switch {
-	case a.outputType.Oid.IsMySQLString():
+	case a.inputTypes[0].Oid.IsMySQLString() && a.outputType.Oid.IsMySQLString():
 		source.Da = types.EncodeStringSlice(getUnaryAggStrVs(a))
 	default:
 		source.Da = a.da
@@ -448,7 +449,7 @@ func (a *UnaryAgg[T1, T2]) UnmarshalBinary(data []byte) error {
 	copy(data, decoded.Da)
 	a.da = data
 
-	setAggValues[T1, T2](a, a.outputType)
+	setAggValues[T1, T2](a)
 
 	return a.priv.UnmarshalBinary(decoded.Private)
 }
@@ -466,9 +467,10 @@ func getUnaryAggStrVs(strUnaryAgg any) []string {
 	return result
 }
 
-func setAggValues[T1, T2 any](agg any, typ types.Type) {
+func setAggValues[T1, T2 any](agg any) {
+	a := agg.(*UnaryAgg[T1, T2])
 	switch {
-	case typ.Oid.IsMySQLString():
+	case a.inputTypes[0].Oid.IsMySQLString() && a.outputType.Oid.IsMySQLString():
 		a := agg.(*UnaryAgg[[]byte, []byte])
 		values := types.DecodeStringSlice(a.da)
 		a.vs = make([][]byte, len(values))
@@ -476,7 +478,6 @@ func setAggValues[T1, T2 any](agg any, typ types.Type) {
 			a.vs[i] = []byte(values[i])
 		}
 	default:
-		a := agg.(*UnaryAgg[T1, T2])
 		a.vs = types.DecodeSlice[T2](a.da)
 	}
 }

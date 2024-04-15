@@ -72,7 +72,12 @@ func (builder *QueryBuilder) remapColRefForExpr(expr *Expr, colMap map[[2]int32]
 			ne.Col.ColPos = ids[1]
 			ne.Col.Name = builder.nameByColRef[mapID]
 		} else {
-			return moerr.NewParseError(builder.GetContext(), "can't find column %v in context's map %v", mapID, colMap)
+			var keys []string
+			for k := range colMap {
+				keys = append(keys, fmt.Sprintf("%v", k))
+			}
+			mapKeys := fmt.Sprintf("{ %s }", strings.Join(keys, ", "))
+			return moerr.NewParseError(builder.GetContext(), "can't find column %v in context's map %s", mapID, mapKeys)
 		}
 
 	case *plan.Expr_F:
@@ -468,7 +473,7 @@ func (builder *QueryBuilder) remapAllColRefs(nodeID int32, step int32, colRefCnt
 			remapping.addColRef(globalRef)
 
 			node.ProjectList = append(node.ProjectList, &plan.Expr{
-				Typ: &plan.Type{
+				Typ: plan.Type{
 					Id:          int32(types.T_bool),
 					NotNullable: false,
 				},
@@ -632,7 +637,7 @@ func (builder *QueryBuilder) remapAllColRefs(nodeID int32, step int32, colRefCnt
 		if child.NodeType == plan.Node_TABLE_SCAN && len(child.FilterList) == 0 && len(node.GroupBy) == 0 && child.Limit == nil && child.Offset == nil {
 			child.AggList = make([]*Expr, 0, len(node.AggList))
 			for _, agg := range node.AggList {
-				switch agg.Expr.(*plan.Expr_F).F.Func.ObjName {
+				switch agg.GetF().Func.ObjName {
 				case "starcount", "count", "min", "max":
 					child.AggList = append(child.AggList, DeepCopyExpr(agg))
 				default:
@@ -1205,7 +1210,7 @@ func (builder *QueryBuilder) remapAllColRefs(nodeID int32, step int32, colRefCnt
 		// VALUE_SCAN always have one column now
 		if node.TableDef == nil { // like select 1,2
 			node.ProjectList = append(node.ProjectList, &plan.Expr{
-				Typ:  &plan.Type{Id: int32(types.T_int64)},
+				Typ:  plan.Type{Id: int32(types.T_int64)},
 				Expr: &plan.Expr_Lit{Lit: &plan.Literal{Value: &plan.Literal_I64Val{I64Val: 0}}},
 			})
 		} else {
@@ -1245,22 +1250,22 @@ func (builder *QueryBuilder) remapAllColRefs(nodeID int32, step int32, colRefCnt
 	case plan.Node_LOCK_OP:
 		preNode := builder.qry.Nodes[node.Children[0]]
 		pkexpr := &plan.Expr{
-			Typ: node.LockTargets[0].GetPrimaryColTyp(),
+			Typ: *node.LockTargets[0].GetPrimaryColTyp(),
 			Expr: &plan.Expr_Col{
 				Col: &plan.ColRef{
-					RelPos: preNode.BindingTags[0],
+					RelPos: node.BindingTags[1],
 					ColPos: node.LockTargets[0].PrimaryColIdxInBat,
 				},
 			},
 		}
-		oldPos := [2]int32{preNode.BindingTags[0], node.LockTargets[0].PrimaryColIdxInBat}
+		oldPos := [2]int32{node.BindingTags[1], node.LockTargets[0].PrimaryColIdxInBat}
 		increaseRefCnt(pkexpr, 1, colRefCnt)
 		childRemapping, err := builder.remapAllColRefs(node.Children[0], step, colRefCnt, colRefBool, sinkColRef)
 		if err != nil {
 			return nil, err
 		}
 
-		tableDef := preNode.GetTableDef()
+		tableDef := node.GetTableDef()
 		if tableDef.Partition != nil {
 			partitionIdx := len(preNode.ProjectList)
 			partitionExpr := DeepCopyExpr(tableDef.Partition.PartitionExpression)
@@ -1328,7 +1333,7 @@ func (builder *QueryBuilder) markSinkProject(nodeID int32, step int32, colRefBoo
 		for _, i := range node.SourceStep {
 			if i >= step {
 				for _, expr := range node.ProjectList {
-					colRefBool[[2]int32{i, expr.Expr.(*plan.Expr_Col).Col.ColPos}] = true
+					colRefBool[[2]int32{i, expr.GetCol().ColPos}] = true
 				}
 			}
 		}
@@ -1339,37 +1344,20 @@ func (builder *QueryBuilder) markSinkProject(nodeID int32, step int32, colRefBoo
 	}
 }
 
-//func (builder *QueryBuilder) remapSinkScanColRefs(nodeID int32, step int32, sinkColRef map[[2]int32]int) {
-//	node := builder.qry.Nodes[nodeID]
-//
-//	switch node.NodeType {
-//	case plan.Node_SINK_SCAN:
-//		for _, expr := range node.ProjectList {
-//			expr.Expr.(*plan.Expr_Col).Col.ColPos = int32(sinkColRef[[2]int32{step, expr.Expr.(*plan.Expr_Col).Col.ColPos}])
-//		}
-//	default:
-//		for i := range node.Children {
-//			builder.remapSinkScanColRefs(node.Children[i], step, sinkColRef)
-//		}
-//	}
-//}
-
 func (builder *QueryBuilder) rewriteStarApproxCount(nodeID int32) {
 	node := builder.qry.Nodes[nodeID]
 
 	switch node.NodeType {
 	case plan.Node_AGG:
 		if len(node.GroupBy) == 0 && len(node.AggList) == 1 {
-			agg, ok := node.AggList[0].Expr.(*plan.Expr_F)
-			if ok && agg.F.Func.ObjName == "approx_count" {
+			if agg := node.AggList[0].GetF(); agg != nil && agg.Func.ObjName == "approx_count" {
 				if len(node.Children) == 1 {
 					child := builder.qry.Nodes[node.Children[0]]
 					if child.NodeType == plan.Node_TABLE_SCAN && len(child.FilterList) == 0 {
-						agg.F.Func.ObjName = "sum"
+						agg.Func.ObjName = "sum"
 						fr, _ := function.GetFunctionByName(context.TODO(), "sum", []types.Type{types.T_int64.ToType()})
-						agg.F.Func.Obj = fr.GetEncodedOverloadID()
-						agg.F.Args[0] = &plan.Expr{
-							Typ: &Type{},
+						agg.Func.Obj = fr.GetEncodedOverloadID()
+						agg.Args[0] = &plan.Expr{
 							Expr: &plan.Expr_Col{
 								Col: &plan.ColRef{
 									RelPos: 0,
@@ -1381,7 +1369,7 @@ func (builder *QueryBuilder) rewriteStarApproxCount(nodeID int32) {
 						var exprs []*plan.Expr
 						str := child.ObjRef.SchemaName + "." + child.TableDef.Name
 						exprs = append(exprs, &plan.Expr{
-							Typ: &Type{
+							Typ: Type{
 								Id:          int32(types.T_varchar),
 								NotNullable: true,
 								Width:       int32(len(str)),
@@ -1396,7 +1384,7 @@ func (builder *QueryBuilder) rewriteStarApproxCount(nodeID int32) {
 						})
 						str = child.TableDef.Cols[0].Name
 						exprs = append(exprs, &plan.Expr{
-							Typ: &Type{
+							Typ: Type{
 								Id:          int32(types.T_varchar),
 								NotNullable: true,
 								Width:       int32(len(str)),
@@ -1415,10 +1403,10 @@ func (builder *QueryBuilder) rewriteStarApproxCount(nodeID int32) {
 						childId := builder.appendNode(scanNode, nil)
 						node.Children[0] = builder.buildMetadataScan(nil, nil, exprs, childId)
 						child = builder.qry.Nodes[node.Children[0]]
-						switch expr := agg.F.Args[0].Expr.(type) {
+						switch expr := agg.Args[0].Expr.(type) {
 						case *plan.Expr_Col:
 							expr.Col.RelPos = child.BindingTags[0]
-							agg.F.Args[0].Typ = child.TableDef.Cols[expr.Col.ColPos].Typ
+							agg.Args[0].Typ = child.TableDef.Cols[expr.Col.ColPos].Typ
 						}
 					}
 				}
@@ -1436,6 +1424,7 @@ func (builder *QueryBuilder) createQuery() (*Query, error) {
 	sinkColRef := make(map[[2]int32]int)
 
 	for i, rootID := range builder.qry.Steps {
+		builder.skipStats = builder.canSkipStats()
 		builder.rewriteDistinctToAGG(rootID)
 		builder.rewriteEffectlessAggToProject(rootID)
 		rootID, _ = builder.pushdownFilters(rootID, nil, false)
@@ -1444,7 +1433,7 @@ func (builder *QueryBuilder) createQuery() (*Query, error) {
 			return nil, err
 		}
 
-		builder.pushdownLimit(rootID)
+		builder.pushdownLimitToTableScan(rootID)
 
 		colRefCnt := make(map[[2]int32]int)
 		builder.countColRefs(rootID, colRefCnt)
@@ -1457,7 +1446,7 @@ func (builder *QueryBuilder) createQuery() (*Query, error) {
 		tagCnt := make(map[int32]int)
 		rootID = builder.removeEffectlessLeftJoins(rootID, tagCnt)
 		ReCalcNodeStats(rootID, builder, true, false, true)
-		builder.pushTopDownToLeftJoin(rootID)
+		builder.pushdownTopThroughLeftJoin(rootID)
 		ReCalcNodeStats(rootID, builder, true, false, true)
 
 		rootID = builder.aggPushDown(rootID)
@@ -1484,6 +1473,7 @@ func (builder *QueryBuilder) createQuery() (*Query, error) {
 
 		builder.partitionPrune(rootID)
 
+		builder.optimizeLikeExpr(rootID)
 		rootID = builder.applyIndices(rootID, colRefCnt, make(map[[2]int32]*plan.Expr))
 		ReCalcNodeStats(rootID, builder, true, false, true)
 
@@ -1493,8 +1483,10 @@ func (builder *QueryBuilder) createQuery() (*Query, error) {
 		// after determine shuffle, be careful when calling ReCalcNodeStats again.
 		// needResetHashMapStats should always be false from here
 
-		builder.pushdownRuntimeFilters(rootID)
+		builder.generateRuntimeFilters(rootID)
 		ReCalcNodeStats(rootID, builder, true, false, false)
+
+		builder.handleMessgaes(rootID)
 
 		builder.rewriteStarApproxCount(rootID)
 
@@ -1506,7 +1498,6 @@ func (builder *QueryBuilder) createQuery() (*Query, error) {
 				colRefBool[[2]int32{int32(i), int32(j)}] = true
 			}
 		}
-
 	}
 
 	for i := range builder.qry.Steps {
@@ -1674,7 +1665,7 @@ func (builder *QueryBuilder) buildUnion(stmt *tree.UnionClause, astOrderBy tree.
 				if !argsType[idx].Eq(targetArgType) {
 					node := builder.qry.Nodes[tmpID]
 					if argsType[idx].Oid == types.T_any {
-						node.ProjectList[columnIdx].Typ = targetType
+						node.ProjectList[columnIdx].Typ = *targetType
 					} else {
 						node.ProjectList[columnIdx], err = appendCastBeforeExpr(builder.GetContext(), node.ProjectList[columnIdx], targetType)
 						if err != nil {
@@ -1930,11 +1921,11 @@ func (builder *QueryBuilder) buildSelect(stmt *tree.Select, ctx *BindContext, is
 				return 0, moerr.NewSyntaxError(builder.GetContext(), "WITH query name %q specified more than once", name)
 			}
 
-			var maskedCTEs map[string]emptyType
+			var maskedCTEs map[string]bool
 			if len(maskedNames) > 0 {
-				maskedCTEs = make(map[string]emptyType)
+				maskedCTEs = make(map[string]bool)
 				for _, mask := range maskedNames {
-					maskedCTEs[mask] = emptyStruct
+					maskedCTEs[mask] = true
 				}
 			}
 
@@ -2101,11 +2092,9 @@ func (builder *QueryBuilder) buildSelect(stmt *tree.Select, ctx *BindContext, is
 		}
 		strColTyp := makeTypeByPlan2Type(strTyp)
 		strColTargetTyp := &plan.Expr{
-			Typ: strTyp,
+			Typ: *strTyp,
 			Expr: &plan.Expr_T{
-				T: &plan.TargetType{
-					Typ: strTyp,
-				},
+				T: &plan.TargetType{},
 			},
 		}
 		colCount := len(valuesClause.Rows[0])
@@ -2163,7 +2152,7 @@ func (builder *QueryBuilder) buildSelect(stmt *tree.Select, ctx *BindContext, is
 			tableDef.Cols[i] = &plan.ColDef{
 				ColId: 0,
 				Name:  colName,
-				Typ:   strTyp,
+				Typ:   *strTyp,
 			}
 		}
 		bat.SetRowCount(rowCount)
@@ -2232,7 +2221,7 @@ func (builder *QueryBuilder) buildSelect(stmt *tree.Select, ctx *BindContext, is
 				Children:    []int32{nodeID},
 				TableDef:    tableDef,
 				LockTargets: []*plan.LockTarget{lockTarget},
-				BindingTags: []int32{builder.genNewTag()},
+				BindingTags: []int32{builder.genNewTag(), builder.qry.Nodes[nodeID].BindingTags[0]},
 			}
 
 			if astLimit == nil {
@@ -2286,6 +2275,15 @@ func (builder *QueryBuilder) buildSelect(stmt *tree.Select, ctx *BindContext, is
 			}, ctx)
 		}
 
+		ctx.groupTag = builder.genNewTag()
+		ctx.aggregateTag = builder.genNewTag()
+		ctx.projectTag = builder.genNewTag()
+		ctx.windowTag = builder.genNewTag()
+		ctx.sampleTag = builder.genNewTag()
+		if astTimeWindow != nil {
+			ctx.timeTag = builder.genNewTag() // ctx.timeTag > 0
+		}
+
 		// Preprocess aliases
 		for i := range selectList {
 			selectList[i].Expr, err = ctx.qualifyColumnNames(selectList[i].Expr, NoAlias)
@@ -2301,15 +2299,6 @@ func (builder *QueryBuilder) buildSelect(stmt *tree.Select, ctx *BindContext, is
 					astExpr: selectList[i].Expr,
 				}
 			}
-		}
-
-		ctx.groupTag = builder.genNewTag()
-		ctx.aggregateTag = builder.genNewTag()
-		ctx.projectTag = builder.genNewTag()
-		ctx.windowTag = builder.genNewTag()
-		ctx.sampleTag = builder.genNewTag()
-		if astTimeWindow != nil {
-			ctx.timeTag = builder.genNewTag() // ctx.timeTag > 0
 		}
 
 		// bind GROUP BY clause
@@ -2358,6 +2347,15 @@ func (builder *QueryBuilder) buildSelect(stmt *tree.Select, ctx *BindContext, is
 		exprStr := proj.String()
 		if _, ok := ctx.projectByExpr[exprStr]; !ok {
 			ctx.projectByExpr[exprStr] = int32(i)
+		}
+
+		if exprCol, ok := proj.Expr.(*plan.Expr_Col); ok {
+			if col := exprCol.Col; col != nil {
+				if binding, ok := ctx.bindingByTag[col.RelPos]; ok {
+					col.DbName = binding.db
+					col.TblName = binding.table
+				}
+			}
 		}
 
 		if !notCacheable {
@@ -2451,7 +2449,7 @@ func (builder *QueryBuilder) buildSelect(stmt *tree.Select, ctx *BindContext, is
 					}
 				}
 				if astTimeWindow.Fill.Val != nil {
-					e, err := appendCastBeforeExpr(builder.GetContext(), v, t.Typ)
+					e, err := appendCastBeforeExpr(builder.GetContext(), v, &t.Typ)
 					if err != nil {
 						return 0, err
 					}
@@ -2476,7 +2474,7 @@ func (builder *QueryBuilder) buildSelect(stmt *tree.Select, ctx *BindContext, is
 					if err != nil {
 						return 0, err
 					}
-					col, err := appendCastBeforeExpr(builder.GetContext(), v, fillCols[i].Typ)
+					col, err := appendCastBeforeExpr(builder.GetContext(), v, &fillCols[i].Typ)
 					if err != nil {
 						return 0, err
 					}
@@ -2724,7 +2722,7 @@ func (builder *QueryBuilder) buildSelect(stmt *tree.Select, ctx *BindContext, is
 		}
 
 		for i, w := range ctx.windows {
-			e := w.Expr.(*plan.Expr_W).W
+			e := w.GetW()
 			if len(e.PartitionBy) > 0 {
 				partitionBy := make([]*plan.OrderBySpec, 0, len(e.PartitionBy))
 				for _, p := range e.PartitionBy {
@@ -2966,6 +2964,8 @@ func appendSelectList(
 			} else {
 				if selectExpr.As != nil && !selectExpr.As.Empty() {
 					ctx.headings = append(ctx.headings, selectExpr.As.Origin())
+				} else if expr.CStrParts[0] != nil {
+					ctx.headings = append(ctx.headings, expr.CStrParts[0].Compare())
 				} else {
 					ctx.headings = append(ctx.headings, expr.Parts[0])
 				}
@@ -3357,7 +3357,8 @@ func (builder *QueryBuilder) buildTable(stmt tree.TableExpr, ctx *BindContext, p
 							return 0, moerr.NewParseError(builder.GetContext(), "recursive cte %s projection error", table)
 						}
 						for i := range n.ProjectList {
-							n.ProjectList[i], err = makePlan2CastExpr(builder.GetContext(), n.ProjectList[i], projects[i].GetTyp())
+							projTyp := projects[i].GetTyp()
+							n.ProjectList[i], err = makePlan2CastExpr(builder.GetContext(), n.ProjectList[i], &projTyp)
 							if err != nil {
 								return
 							}
@@ -3466,7 +3467,7 @@ func (builder *QueryBuilder) buildTable(stmt tree.TableExpr, ctx *BindContext, p
 			nodeType = plan.Node_EXTERNAL_SCAN
 			col := &ColDef{
 				Name: catalog.ExternalFilePath,
-				Typ: &plan.Type{
+				Typ: plan.Type{
 					Id:    int32(types.T_varchar),
 					Width: types.MaxVarcharLen,
 					Table: table,
@@ -3499,7 +3500,12 @@ func (builder *QueryBuilder) buildTable(stmt tree.TableExpr, ctx *BindContext, p
 					return 0, err
 				}
 
-				originStmts, err := mysql.Parse(builder.GetContext(), viewData.Stmt, 1)
+				originStmts, err := mysql.Parse(builder.GetContext(), viewData.Stmt, 1, 0)
+				defer func() {
+					for _, s := range originStmts {
+						s.Free()
+					}
+				}()
 				if err != nil {
 					return 0, err
 				}
@@ -3518,11 +3524,11 @@ func (builder *QueryBuilder) buildTable(stmt tree.TableExpr, ctx *BindContext, p
 				}
 
 				viewName := viewStmt.Name.ObjectName
-				var maskedCTEs map[string]emptyType
+				var maskedCTEs map[string]bool
 				if len(ctx.cteByName) > 0 {
-					maskedCTEs = make(map[string]emptyType)
+					maskedCTEs = make(map[string]bool)
 					for name := range ctx.cteByName {
-						maskedCTEs[name] = emptyStruct
+						maskedCTEs[name] = true
 					}
 				}
 				defaultDatabase := viewData.DefaultDatabase
@@ -3546,7 +3552,7 @@ func (builder *QueryBuilder) buildTable(stmt tree.TableExpr, ctx *BindContext, p
 					SchemaName:      tree.Identifier(""),
 					ExplicitCatalog: false,
 					ExplicitSchema:  false,
-				})
+				}, nil)
 				return builder.buildTable(newTableName, ctx, preNodeId, leftCtx)
 			}
 		}
@@ -3618,7 +3624,7 @@ func (builder *QueryBuilder) buildTable(stmt tree.TableExpr, ctx *BindContext, p
 						return 0, err
 					}
 					builder.qry.Nodes[nodeID].FilterList = accountFilterExprs
-				} else if dbName == catalog.MO_SYSTEM_METRICS && tableName == catalog.MO_METRIC {
+				} else if dbName == catalog.MO_SYSTEM_METRICS && (tableName == catalog.MO_METRIC || tableName == catalog.MO_SQL_STMT_CU) {
 					motablesFilter := util.BuildSysMetricFilter(acctName)
 					ctx.binder = NewWhereBinder(builder, ctx)
 					accountFilterExprs, err := splitAndBindCondition(motablesFilter, NoAlias, ctx)
@@ -3689,12 +3695,19 @@ func (builder *QueryBuilder) genNewTag() int32 {
 	return builder.nextTag
 }
 
+func (builder *QueryBuilder) genNewMsgTag() (ret int32) {
+	// start from 1, and 0 means do not handle with message
+	builder.nextMsgTag++
+	return builder.nextMsgTag
+}
+
 func (builder *QueryBuilder) addBinding(nodeID int32, alias tree.AliasClause, ctx *BindContext) error {
 	node := builder.qry.Nodes[nodeID]
 
 	var cols []string
 	var colIsHidden []bool
 	var types []*plan.Type
+	var defaultVals []string
 	var binding *Binding
 	var table string
 	if node.NodeType == plan.Node_TABLE_SCAN || node.NodeType == plan.Node_MATERIAL_SCAN || node.NodeType == plan.Node_EXTERNAL_SCAN || node.NodeType == plan.Node_FUNCTION_SCAN || node.NodeType == plan.Node_VALUE_SCAN || node.NodeType == plan.Node_SINK_SCAN || node.NodeType == plan.Node_RECURSIVE_SCAN || node.NodeType == plan.Node_SOURCE_SCAN {
@@ -3726,6 +3739,7 @@ func (builder *QueryBuilder) addBinding(nodeID int32, alias tree.AliasClause, ct
 		cols = make([]string, colLength)
 		colIsHidden = make([]bool, colLength)
 		types = make([]*plan.Type, colLength)
+		defaultVals = make([]string, colLength)
 
 		tag := node.BindingTags[0]
 
@@ -3736,12 +3750,16 @@ func (builder *QueryBuilder) addBinding(nodeID int32, alias tree.AliasClause, ct
 				cols[i] = col.Name
 			}
 			colIsHidden[i] = col.Hidden
-			types[i] = col.Typ
+			types[i] = &col.Typ
+			if col.Default != nil {
+				defaultVals[i] = col.Default.OriginString
+			}
 			name := table + "." + cols[i]
 			builder.nameByColRef[[2]int32{tag, int32(i)}] = name
 		}
 
-		binding = NewBinding(tag, nodeID, table, node.TableDef.TblId, cols, colIsHidden, types, util.TableIsClusterTable(node.TableDef.TableType))
+		binding = NewBinding(tag, nodeID, node.TableDef.DbName, table, node.TableDef.TblId, cols, colIsHidden, types,
+			util.TableIsClusterTable(node.TableDef.TableType), defaultVals)
 	} else {
 		// Subquery
 		subCtx := builder.ctxByNode[nodeID]
@@ -3768,6 +3786,7 @@ func (builder *QueryBuilder) addBinding(nodeID int32, alias tree.AliasClause, ct
 		cols = make([]string, colLength)
 		colIsHidden = make([]bool, colLength)
 		types = make([]*plan.Type, colLength)
+		defaultVals = make([]string, colLength)
 
 		for i, col := range headings {
 			if i < len(alias.Cols) {
@@ -3775,13 +3794,14 @@ func (builder *QueryBuilder) addBinding(nodeID int32, alias tree.AliasClause, ct
 			} else {
 				cols[i] = strings.ToLower(col)
 			}
-			types[i] = projects[i].Typ
+			types[i] = &projects[i].Typ
 			colIsHidden[i] = false
+			defaultVals[i] = ""
 			name := table + "." + cols[i]
 			builder.nameByColRef[[2]int32{tag, int32(i)}] = name
 		}
 
-		binding = NewBinding(tag, nodeID, table, 0, cols, colIsHidden, types, false)
+		binding = NewBinding(tag, nodeID, "", table, 0, cols, colIsHidden, types, false, defaultVals)
 	}
 
 	ctx.bindings = append(ctx.bindings, binding)
@@ -3875,20 +3895,20 @@ func (builder *QueryBuilder) buildJoinTable(tbl *tree.JoinTableExpr, ctx *BindCo
 
 	default:
 		if tbl.JoinType == tree.JOIN_TYPE_NATURAL || tbl.JoinType == tree.JOIN_TYPE_NATURAL_LEFT || tbl.JoinType == tree.JOIN_TYPE_NATURAL_RIGHT {
-			leftCols := make(map[string]emptyType)
+			leftCols := make(map[string]bool)
 			for _, binding := range leftCtx.bindings {
 				for i, col := range binding.cols {
 					if binding.colIsHidden[i] {
 						continue
 					}
-					leftCols[col] = emptyStruct
+					leftCols[col] = true
 				}
 			}
 
 			var usingCols []string
 			for _, binding := range rightCtx.bindings {
 				for _, col := range binding.cols {
-					if _, ok := leftCols[col]; ok {
+					if leftCols[col] {
 						usingCols = append(usingCols, col)
 					}
 				}

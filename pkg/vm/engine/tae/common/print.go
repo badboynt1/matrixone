@@ -36,6 +36,7 @@ const (
 	PPL1
 	PPL2
 	PPL3
+	PPL4
 )
 
 type ZonemapPrintKind int
@@ -186,7 +187,7 @@ func TypeStringValue(t types.Type, v any, isNull bool, opts ...TypePrintOpt) str
 	}
 }
 
-func vec2Str[T any](vec []T, v *vector.Vector) string {
+func vec2Str[T any](vec []T, v *vector.Vector, opts ...TypePrintOpt) string {
 	var w bytes.Buffer
 	_, _ = w.WriteString(fmt.Sprintf("[%d]: ", v.Length()))
 	first := true
@@ -197,14 +198,14 @@ func vec2Str[T any](vec []T, v *vector.Vector) string {
 		if v.GetNulls().Contains(uint64(i)) {
 			_, _ = w.WriteString(TypeStringValue(*v.GetType(), nil, true))
 		} else {
-			_, _ = w.WriteString(TypeStringValue(*v.GetType(), vec[i], false, WithDoNotPrintBin{}))
+			_, _ = w.WriteString(TypeStringValue(*v.GetType(), vec[i], false, opts...))
 		}
 		first = false
 	}
 	return w.String()
 }
 
-func MoVectorToString(v *vector.Vector, printN int) string {
+func MoVectorToString(v *vector.Vector, printN int, opts ...TypePrintOpt) string {
 	switch v.GetType().Oid {
 	case types.T_bool:
 		return vec2Str(vector.MustFixedCol[bool](v)[:printN], v)
@@ -252,7 +253,7 @@ func MoVectorToString(v *vector.Vector, printN int) string {
 		return vec2Str(vector.MustFixedCol[types.Blockid](v)[:printN], v)
 	}
 	if v.GetType().IsVarlen() {
-		return vec2Str(vector.MustBytesCol(v)[:printN], v)
+		return vec2Str(vector.MustBytesCol(v)[:printN], v, opts...)
 	}
 	return fmt.Sprintf("unkown type vec... %v", *v.GetType())
 }
@@ -264,7 +265,11 @@ func MoBatchToString(moBat *batch.Batch, printN int) string {
 	}
 	buf := new(bytes.Buffer)
 	for i, vec := range moBat.Vecs {
-		fmt.Fprintf(buf, "[%v] = %v\n", moBat.Attrs[i], MoVectorToString(vec, n))
+		if len(moBat.Attrs) == 0 {
+			fmt.Fprintf(buf, "[col%v] = %v\n", i, MoVectorToString(vec, n))
+		} else {
+			fmt.Fprintf(buf, "[%v] = %v\n", moBat.Attrs[i], MoVectorToString(vec, n, WithDoNotPrintBin{}))
+		}
 	}
 	return buf.String()
 }

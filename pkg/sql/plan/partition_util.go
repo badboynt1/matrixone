@@ -147,7 +147,7 @@ func collectArgsType(ctx context.Context, tblInfo *plan.TableDef, exprs ...tree.
 		if column == nil {
 			return nil, moerr.NewBadFieldError(ctx, col.Parts[0], "partition function")
 		}
-		types = append(types, column.GetTyp().GetId())
+		types = append(types, column.GetTyp().Id)
 	}
 	return types, nil
 }
@@ -546,7 +546,7 @@ func formatListPartitionValue(binder *PartitionBinder, tblInfo *TableDef, pi *pl
 			if colInfo == nil {
 				return nil, moerr.NewFieldNotFoundPart(binder.GetContext())
 			}
-			colTps = append(colTps, colInfo.Typ)
+			colTps = append(colTps, &colInfo.Typ)
 		}
 	}
 
@@ -618,7 +618,7 @@ func collectColumnsType(partitionDef *plan.PartitionByDef) []*Type {
 	if len(partitionDef.PartitionColumns.Columns) > 0 {
 		colTypes := make([]*Type, 0, len(partitionDef.PartitionColumns.Columns))
 		for _, col := range partitionDef.PartitionColumns.Columns {
-			colTypes = append(colTypes, col.Typ)
+			colTypes = append(colTypes, &col.Typ)
 		}
 		return colTypes
 	}
@@ -675,7 +675,7 @@ func PartitionFuncConstantFold(bat *batch.Batch, e *plan.Expr, proc *process.Pro
 		}
 		defer vec.Free(proc.Mp())
 
-		vec.InplaceSort()
+		vec.InplaceSortAndCompact()
 		data, err := vec.MarshalBinary()
 		if err != nil {
 			return nil, err
@@ -978,12 +978,12 @@ func compareTwoRangeColumns(ctx context.Context, curr, prev *plan.PartitionItem,
 
 // evalPartitionBoolExpr Calculate the bool result of comparing the values of two range partition `less than value`
 func evalPartitionBoolExpr(ctx context.Context, lOriExpr *Expr, rOriExpr *Expr, colInfo *plan.ColDef, binder *PartitionBinder) (bool, error) {
-	lexpr, err := makePlan2CastExpr(ctx, lOriExpr, colInfo.Typ)
+	lexpr, err := makePlan2CastExpr(ctx, lOriExpr, &colInfo.Typ)
 	if err != nil {
 		return false, err
 	}
 
-	rexpr, err := makePlan2CastExpr(ctx, rOriExpr, colInfo.Typ)
+	rexpr, err := makePlan2CastExpr(ctx, rOriExpr, &colInfo.Typ)
 	if err != nil {
 		return false, err
 	}

@@ -16,6 +16,7 @@ package function
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -25,6 +26,9 @@ import (
 	"strings"
 	"time"
 	"unsafe"
+
+	"github.com/RoaringBitmap/roaring"
+	"golang.org/x/exp/constraints"
 
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/common/mpool"
@@ -40,7 +44,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/vectorize/momath"
 	"github.com/matrixorigin/matrixone/pkg/version"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
-	"golang.org/x/exp/constraints"
 )
 
 func AbsUInt64(ivecs []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int) error {
@@ -58,6 +61,19 @@ func AbsInt64(ivecs []*vector.Vector, result vector.FunctionResultWrapper, proc 
 func AbsFloat64(ivecs []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int) error {
 	return opUnaryFixedToFixedWithErrorCheck[float64, float64](ivecs, result, proc, length, func(v float64) (float64, error) {
 		return momath.AbsSigned[float64](v)
+	})
+}
+
+func absDecimal64(v types.Decimal64) types.Decimal64 {
+	if v.Sign() {
+		v = v.Minus()
+	}
+	return v
+}
+
+func AbsDecimal64(ivecs []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int) error {
+	return opUnaryFixedToFixed[types.Decimal64, types.Decimal64](ivecs, result, proc, length, func(v types.Decimal64) types.Decimal64 {
+		return absDecimal64(v)
 	})
 }
 
@@ -776,6 +792,14 @@ func HexUint64(ivecs []*vector.Vector, result vector.FunctionResultWrapper, proc
 	return opUnaryFixedToStr[uint64](ivecs, result, proc, length, hexEncodeUint64)
 }
 
+func HexArray(ivecs []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int) error {
+	return opUnaryBytesToBytesWithErrorCheck(ivecs, result, proc, length, func(data []byte) ([]byte, error) {
+		buf := make([]byte, hex.EncodedLen(len(functionUtil.QuickBytesToStr(data))))
+		hex.Encode(buf, data)
+		return buf, nil
+	})
+}
+
 func hexEncodeString(xs []byte) string {
 	return hex.EncodeToString(xs)
 }
@@ -786,6 +810,53 @@ func hexEncodeInt64(xs int64) string {
 
 func hexEncodeUint64(xs uint64) string {
 	return fmt.Sprintf("%X", xs)
+}
+
+func unhexToBytes(data []byte, null bool, rs *vector.FunctionResult[types.Varlena]) error {
+	if null {
+		return rs.AppendMustNullForBytesResult()
+	}
+
+	buf := make([]byte, hex.DecodedLen(len(data)))
+	_, err := hex.Decode(buf, data)
+	if err != nil {
+		return rs.AppendMustNullForBytesResult()
+	}
+	return rs.AppendMustBytesValue(buf)
+}
+
+func Unhex(parameters []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int) error {
+	source := vector.GenerateFunctionStrParameter(parameters[0])
+	rs := vector.MustFunctionResult[types.Varlena](result)
+
+	rowCount := uint64(length)
+	for i := uint64(0); i < rowCount; i++ {
+		data, null := source.GetStrValue(i)
+		if err := unhexToBytes(data, null, rs); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ToBase64(ivecs []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int) (err error) {
+	return opUnaryBytesToBytesWithErrorCheck(ivecs, result, proc, length, func(data []byte) ([]byte, error) {
+		buf := make([]byte, base64.StdEncoding.EncodedLen(len(functionUtil.QuickBytesToStr(data))))
+		base64.StdEncoding.Encode(buf, data)
+		return buf, nil
+	})
+}
+
+func FromBase64(ivecs []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int) (err error) {
+	return opUnaryBytesToBytesWithErrorCheck(ivecs, result, proc, length, func(data []byte) ([]byte, error) {
+		buf := make([]byte, base64.StdEncoding.DecodedLen(len(functionUtil.QuickBytesToStr(data))))
+		_, err := base64.StdEncoding.Decode(buf, data)
+		if err != nil {
+			return nil, err
+		}
+		return buf, nil
+	})
 }
 
 func Length(ivecs []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int) error {
@@ -1310,4 +1381,27 @@ func BitCast(
 	}
 
 	return moerr.NewInternalError(ctx, fmt.Sprintf("unsupported cast from %s to %s", source.GetType(), toType))
+}
+
+func BitmapBitPosition(parameters []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int) error {
+	return opUnaryFixedToFixed[uint64, uint64](parameters, result, proc, length, func(v uint64) uint64 {
+		// low 15 bits
+		return v & 0x7fff
+	})
+}
+
+func BitmapBucketNumber(parameters []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int) error {
+	return opUnaryFixedToFixed[uint64, uint64](parameters, result, proc, length, func(v uint64) uint64 {
+		return v >> 15
+	})
+}
+
+func BitmapCount(parameters []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int) error {
+	return opUnaryBytesToFixed[uint64](parameters, result, proc, length, func(v []byte) (cnt uint64) {
+		bmp := roaring.New()
+		if err := bmp.UnmarshalBinary(v); err != nil {
+			return 0
+		}
+		return bmp.GetCardinality()
+	})
 }

@@ -214,6 +214,8 @@ const (
 	ErrTxnNeedRetryWithDefChanged uint16 = 20631
 	ErrTxnStale                   uint16 = 20632
 	ErrWaiterPaused               uint16 = 20633
+	ErrRetryForCNRollingRestart   uint16 = 20634
+	ErrNewTxnInCNRollingRestart   uint16 = 20635
 
 	// Group 7: lock service
 	// ErrDeadLockDetected lockservice has detected a deadlock and should abort the transaction if it receives this error
@@ -389,10 +391,10 @@ var errorMsgRefer = map[uint16]moErrorMsgItem{
 	ErrRPCTimeout:   {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "rpc timeout"},
 	ErrClientClosed: {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "client closed"},
 	ErrBackendClosed: {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState},
-		"the connection between CN and TN has been disconnected"},
+		"the connection has been disconnected"},
 	ErrStreamClosed:         {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "stream closed"},
 	ErrNoAvailableBackend:   {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "no available backend"},
-	ErrBackendCannotConnect: {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "can not connect to remote backend"},
+	ErrBackendCannotConnect: {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "can not connect to remote backend, %v"},
 
 	// Group 6: txn
 	ErrTxnClosed:                  {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "the transaction %s has been committed or aborted"},
@@ -428,6 +430,8 @@ var errorMsgRefer = map[uint16]moErrorMsgItem{
 	ErrTxnNeedRetryWithDefChanged: {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "txn need retry in rc mode, def changed"},
 	ErrTxnStale:                   {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "txn is stale: timestamp is too small"},
 	ErrWaiterPaused:               {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "waiter is paused"},
+	ErrRetryForCNRollingRestart:   {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "retry for CN rolling restart"},
+	ErrNewTxnInCNRollingRestart:   {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "new txn in CN rolling restart"},
 
 	// Group 7: lock service
 	ErrDeadLockDetected:     {ER_UNKNOWN_ERROR, []string{MySQLDefaultSqlState}, "deadlock detected"},
@@ -504,10 +508,15 @@ type Error struct {
 	mysqlCode uint16
 	message   string
 	sqlState  string
+	detail    string
 }
 
 func (e *Error) Error() string {
 	return e.message
+}
+
+func (e *Error) Detail() string {
+	return e.detail
 }
 
 func (e *Error) ErrorCode() uint16 {
@@ -616,12 +625,12 @@ func (e *Error) Succeeded() bool {
 //
 // They are both fast, one with less typing and the other is consistent
 // with other error code checking.
-var errOkStopCurrRecur = Error{OkStopCurrRecur, 0, "StopCurrRecur", "00000"}
-var errOkExpectedEOF = Error{OkExpectedEOF, 0, "ExpectedEOF", "00000"}
-var errOkExpectedEOB = Error{OkExpectedEOB, 0, "ExpectedEOB", "00000"}
-var errOkExpectedDup = Error{OkExpectedDup, 0, "ExpectedDup", "00000"}
-var errOkExpectedPossibleDup = Error{OkExpectedPossibleDup, 0, "OkExpectedPossibleDup", "00000"}
-var errOkExpectedNotSafeToStartTransfer = Error{OkExpectedNotSafeToStartTransfer, 0, "OkExpectedNotSafeToStartTransfer", "00000"}
+var errOkStopCurrRecur = Error{OkStopCurrRecur, 0, "StopCurrRecur", "00000", ""}
+var errOkExpectedEOF = Error{OkExpectedEOF, 0, "ExpectedEOF", "00000", ""}
+var errOkExpectedEOB = Error{OkExpectedEOB, 0, "ExpectedEOB", "00000", ""}
+var errOkExpectedDup = Error{OkExpectedDup, 0, "ExpectedDup", "00000", ""}
+var errOkExpectedPossibleDup = Error{OkExpectedPossibleDup, 0, "OkExpectedPossibleDup", "00000", ""}
+var errOkExpectedNotSafeToStartTransfer = Error{OkExpectedNotSafeToStartTransfer, 0, "OkExpectedNotSafeToStartTransfer", "00000", ""}
 
 /*
 GetOk is useless in general, should just use nil.
@@ -1023,8 +1032,13 @@ func NewTxnRWConflict(ctx context.Context) *Error {
 	return newError(ctx, ErrTxnRWConflict)
 }
 
-func NewTxnWWConflict(ctx context.Context) *Error {
-	return newError(ctx, ErrTxnWWConflict)
+func NewTxnWWConflict(
+	ctx context.Context,
+	tableID uint64,
+	s string) *Error {
+	e := newError(ctx, ErrTxnWWConflict)
+	e.detail = fmt.Sprintf("tableID: %d, %s", tableID, s)
+	return e
 }
 
 func NewNotFound(ctx context.Context) *Error {

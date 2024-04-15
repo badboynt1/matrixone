@@ -16,7 +16,6 @@ package frontend
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,10 +29,12 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/pb/metadata"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
 	"github.com/matrixorigin/matrixone/pkg/sql/compile"
+	"github.com/matrixorigin/matrixone/pkg/sql/parsers/dialect"
 	"github.com/matrixorigin/matrixone/pkg/sql/parsers/tree"
 	plan2 "github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"github.com/matrixorigin/matrixone/pkg/sql/util"
 	"github.com/matrixorigin/matrixone/pkg/txn/clock"
+	txnTrace "github.com/matrixorigin/matrixone/pkg/txn/trace"
 	util2 "github.com/matrixorigin/matrixone/pkg/util"
 	"github.com/matrixorigin/matrixone/pkg/util/trace"
 	"github.com/matrixorigin/matrixone/pkg/util/trace/impl/motrace"
@@ -66,7 +67,7 @@ func (ncw *NullComputationWrapper) GetColumns() ([]interface{}, error) {
 	return []interface{}{}, nil
 }
 
-func (ncw *NullComputationWrapper) Compile(requestCtx context.Context, u interface{}, fill func(interface{}, *batch.Batch) error) (interface{}, error) {
+func (ncw *NullComputationWrapper) Compile(requestCtx context.Context, fill func(*batch.Batch) error) (interface{}, error) {
 	return nil, nil
 }
 
@@ -94,7 +95,10 @@ type TxnComputationWrapper struct {
 	compile   *compile.Compile
 	runResult *util2.RunResult
 
-	uuid uuid.UUID
+	ifIsExeccute bool
+	uuid         uuid.UUID
+	//holds values of params in the PREPARE
+	paramVals []any
 }
 
 func InitTxnComputationWrapper(ses *Session, stmt tree.Statement, proc *process.Process) *TxnComputationWrapper {
@@ -113,7 +117,7 @@ func (cwft *TxnComputationWrapper) GetAst() tree.Statement {
 
 func (cwft *TxnComputationWrapper) Free() {
 	if cwft.stmt != nil {
-		if !strings.HasPrefix(cwft.ses.sql, "execute ") {
+		if !cwft.ifIsExeccute {
 			cwft.stmt.Free()
 			cwft.stmt = nil
 		}
@@ -136,25 +140,25 @@ func (cwft *TxnComputationWrapper) GetColumns() ([]interface{}, error) {
 	case *tree.ShowColumns:
 		if len(cols) == 7 {
 			cols = []*plan2.ColDef{
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Field"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Type"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Null"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Key"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Default"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Extra"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Comment"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Field"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Type"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Null"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Key"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Default"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Extra"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Comment"},
 			}
 		} else {
 			cols = []*plan2.ColDef{
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Field"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Type"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Collation"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Null"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Key"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Default"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Extra"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Privileges"},
-				{Typ: &plan2.Type{Id: int32(types.T_char)}, Name: "Comment"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Field"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Type"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Collation"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Null"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Key"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Default"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Extra"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Privileges"},
+				{Typ: plan2.Type{Id: int32(types.T_char)}, Name: "Comment"},
 			}
 		}
 	}
@@ -163,10 +167,10 @@ func (cwft *TxnComputationWrapper) GetColumns() ([]interface{}, error) {
 		c := new(MysqlColumn)
 		c.SetName(col.Name)
 		c.SetOrgName(col.Name)
-		c.SetTable(col.Typ.Table)
-		c.SetOrgTable(col.Typ.Table)
+		c.SetTable(col.TblName)
+		c.SetOrgTable(col.TblName)
 		c.SetAutoIncr(col.Typ.AutoIncr)
-		c.SetSchema(cwft.ses.GetTxnCompileCtx().DefaultDatabase())
+		c.SetSchema(col.DbName)
 		err = convertEngineTypeToMysqlType(cwft.ses.requestCtx, types.T(col.Typ.Id), c)
 		if err != nil {
 			return nil, err
@@ -196,15 +200,12 @@ func (cwft *TxnComputationWrapper) GetServerStatus() uint16 {
 	return cwft.ses.GetServerStatus()
 }
 
-func (cwft *TxnComputationWrapper) Compile(requestCtx context.Context, u interface{}, fill func(interface{}, *batch.Batch) error) (interface{}, error) {
+func (cwft *TxnComputationWrapper) Compile(requestCtx context.Context, fill func(*batch.Batch) error) (interface{}, error) {
+	var originSQL string
 	var span trace.Span
 	requestCtx, span = trace.Start(requestCtx, "TxnComputationWrapper.Compile",
 		trace.WithKind(trace.SpanKindStatement))
 	defer span.End(trace.WithStatementExtra(cwft.ses.GetTxnId(), cwft.ses.GetStmtId(), cwft.ses.GetSqlOfStmt()))
-
-	stats := statistic.StatsInfoFromContext(requestCtx)
-	stats.CompileStart()
-	defer stats.CompileEnd()
 
 	var err error
 	defer RecordStatementTxnID(requestCtx, cwft.ses)
@@ -231,17 +232,21 @@ func (cwft *TxnComputationWrapper) Compile(requestCtx context.Context, u interfa
 	// See `func (exec *txnExecutor) Exec(sql string)` for details.
 	txnOp := cwft.proc.TxnOperator
 	cwft.ses.SetTxnId(txnOp.Txn().ID)
+	//non derived statement
 	if txnOp != nil && !cwft.ses.IsDerivedStmt() {
+		//startStatement has been called
 		ok, _ := cwft.ses.GetTxnHandler().calledStartStmt()
 		if !ok {
 			txnOp.GetWorkspace().StartStatement()
 			cwft.ses.GetTxnHandler().enableStartStmt(txnOp.Txn().ID)
 		}
 
+		//increase statement id
 		err = txnOp.GetWorkspace().IncrStatementID(requestCtx, false)
 		if err != nil {
 			return nil, err
 		}
+		cwft.ses.GetTxnHandler().enableIncrStmt(txnOp.Txn().ID)
 	}
 
 	cacheHit := cwft.plan != nil
@@ -265,73 +270,24 @@ func (cwft *TxnComputationWrapper) Compile(requestCtx context.Context, u interfa
 	}
 	if _, ok := cwft.stmt.(*tree.Execute); ok {
 		executePlan := cwft.plan.GetDcl().GetExecute()
-		stmtName := executePlan.GetName()
-		prepareStmt, err := cwft.ses.GetPrepareStmt(stmtName)
+		plan, stmt, sql, err := replacePlan(requestCtx, cwft.ses, cwft, executePlan)
 		if err != nil {
 			return nil, err
 		}
-		preparePlan := prepareStmt.PreparePlan.GetDcl().GetPrepare()
+		originSQL = sql
+		cwft.plan = plan
 
-		// TODO check if schema change, obj.Obj is zero all the time in 0.6
-		for _, obj := range preparePlan.GetSchemas() {
-			newObj, newTableDef := cwft.ses.txnCompileCtx.Resolve(obj.SchemaName, obj.ObjName)
-			if newObj == nil {
-				return nil, moerr.NewInternalError(requestCtx, "table '%s' in prepare statement '%s' does not exist anymore", obj.ObjName, stmtName)
-			}
-			if newObj.Obj != obj.Obj || newTableDef.Version != uint32(obj.Server) {
-				return nil, moerr.NewInternalError(requestCtx, "table '%s' has been changed, please reset prepare statement '%s'", obj.ObjName, stmtName)
-			}
-		}
-
-		// The default count is 1. Setting it to 2 ensures that memory will not be reclaimed.
-		//  Convenient to reuse memory next time
-		if prepareStmt.InsertBat != nil {
-			prepareStmt.InsertBat.SetCnt(1000) // we will make sure :  when retry in lock error, we will not clean up this batch
-			cwft.proc.SetPrepareBatch(prepareStmt.InsertBat)
-			cwft.proc.SetPrepareExprList(prepareStmt.exprList)
-		}
-		numParams := len(preparePlan.ParamTypes)
-		if prepareStmt.params != nil && prepareStmt.params.Length() > 0 { // use binary protocol
-			if prepareStmt.params.Length() != numParams {
-				return nil, moerr.NewInvalidInput(requestCtx, "Incorrect arguments to EXECUTE")
-			}
-			cwft.proc.SetPrepareParams(prepareStmt.params)
-		} else if len(executePlan.Args) > 0 {
-			if len(executePlan.Args) != numParams {
-				return nil, moerr.NewInvalidInput(requestCtx, "Incorrect arguments to EXECUTE")
-			}
-			params := cwft.proc.GetVector(types.T_text.ToType())
-			for _, arg := range executePlan.Args {
-				exprImpl := arg.Expr.(*plan.Expr_V)
-				param, err := cwft.proc.GetResolveVariableFunc()(exprImpl.V.Name, exprImpl.V.System, exprImpl.V.Global)
-				if err != nil {
-					return nil, err
-				}
-				if param == nil {
-					return nil, moerr.NewInvalidInput(requestCtx, "Incorrect arguments to EXECUTE")
-				}
-				err = util.AppendAnyToStringVector(cwft.proc, param, params)
-				if err != nil {
-					return nil, err
-				}
-			}
-			cwft.proc.SetPrepareParams(params)
-		} else {
-			if numParams > 0 {
-				return nil, moerr.NewInvalidInput(requestCtx, "Incorrect arguments to EXECUTE")
-			}
-		}
-
-		cwft.plan = preparePlan.Plan
-
+		cwft.stmt.Free()
 		// reset plan & stmt
-		cwft.stmt = prepareStmt.PrepareStmt
+		cwft.stmt = stmt
+		cwft.ifIsExeccute = true
 		// reset some special stmt for execute statement
 		switch cwft.stmt.(type) {
 		case *tree.ShowTableStatus:
 			cwft.ses.showStmtType = ShowTableStatus
 			cwft.ses.SetData(nil)
-		case *tree.SetVar, *tree.ShowVariables, *tree.ShowErrors, *tree.ShowWarnings:
+		case *tree.SetVar, *tree.ShowVariables, *tree.ShowErrors, *tree.ShowWarnings,
+			*tree.CreateAccount, *tree.AlterAccount, *tree.DropAccount:
 			return nil, nil
 		}
 
@@ -356,6 +312,10 @@ func (cwft *TxnComputationWrapper) Compile(requestCtx context.Context, u interfa
 	if tInfo != nil {
 		tenant = tInfo.GetTenant()
 	}
+
+	stats := statistic.StatsInfoFromContext(requestCtx)
+	stats.CompileStart()
+	defer stats.CompileEnd()
 	cwft.compile = compile.NewCompile(
 		addr,
 		cwft.ses.GetDatabaseName(),
@@ -387,9 +347,9 @@ func (cwft *TxnComputationWrapper) Compile(requestCtx context.Context, u interfa
 	})
 
 	if _, ok := cwft.stmt.(*tree.ExplainAnalyze); ok {
-		fill = func(obj interface{}, bat *batch.Batch) error { return nil }
+		fill = func(bat *batch.Batch) error { return nil }
 	}
-	err = cwft.compile.Compile(txnCtx, cwft.plan, cwft.ses, fill)
+	err = cwft.compile.Compile(txnCtx, cwft.plan, fill)
 	if err != nil {
 		return nil, err
 	}
@@ -435,6 +395,7 @@ func (cwft *TxnComputationWrapper) Compile(requestCtx context.Context, u interfa
 
 		cwft.ses.EnableInitTempEngine()
 	}
+	cwft.compile.SetOriginSQL(originSQL)
 	return cwft.compile, err
 }
 
@@ -455,6 +416,7 @@ func (cwft *TxnComputationWrapper) Run(ts uint64) (*util2.RunResult, error) {
 		logDebug(cwft.ses, cwft.ses.GetDebugString(), "compile.Run end")
 	}()
 	runResult, err := cwft.compile.Run(ts)
+	cwft.compile.Release()
 	cwft.runResult = runResult
 	cwft.compile = nil
 	return runResult, err
@@ -474,4 +436,73 @@ func getStatementStartAt(ctx context.Context) time.Time {
 		return time.Now()
 	}
 	return v.(time.Time)
+}
+
+// replacePlan replaces the plan of the EXECUTE by the plan generated by
+// the PREPARE and setups the params for the plan.
+func replacePlan(requestCtx context.Context, ses *Session, cwft *TxnComputationWrapper, execPlan *plan.Execute) (*plan.Plan, tree.Statement, string, error) {
+	originSQL := ""
+	stmtName := execPlan.GetName()
+	prepareStmt, err := ses.GetPrepareStmt(stmtName)
+	if err != nil {
+		return nil, nil, originSQL, err
+	}
+	if txnTrace.GetService().Enabled(txnTrace.FeatureTraceTxn) {
+		originSQL = tree.String(prepareStmt.PrepareStmt, dialect.MYSQL)
+	}
+	preparePlan := prepareStmt.PreparePlan.GetDcl().GetPrepare()
+
+	// TODO check if schema change, obj.Obj is zero all the time in 0.6
+	for _, obj := range preparePlan.GetSchemas() {
+		newObj, newTableDef := ses.txnCompileCtx.Resolve(obj.SchemaName, obj.ObjName)
+		if newObj == nil {
+			return nil, nil, originSQL, moerr.NewInternalError(requestCtx, "table '%s' in prepare statement '%s' does not exist anymore", obj.ObjName, stmtName)
+		}
+		if newObj.Obj != obj.Obj || newTableDef.Version != uint32(obj.Server) {
+			return nil, nil, originSQL, moerr.NewInternalError(requestCtx, "table '%s' has been changed, please reset prepare statement '%s'", obj.ObjName, stmtName)
+		}
+	}
+
+	// The default count is 1. Setting it to 2 ensures that memory will not be reclaimed.
+	//  Convenient to reuse memory next time
+	if prepareStmt.InsertBat != nil {
+		prepareStmt.InsertBat.SetCnt(1000) // we will make sure :  when retry in lock error, we will not clean up this batch
+		cwft.proc.SetPrepareBatch(prepareStmt.InsertBat)
+		cwft.proc.SetPrepareExprList(prepareStmt.exprList)
+	}
+	numParams := len(preparePlan.ParamTypes)
+	if prepareStmt.params != nil && prepareStmt.params.Length() > 0 { // use binary protocol
+		if prepareStmt.params.Length() != numParams {
+			return nil, nil, originSQL, moerr.NewInvalidInput(requestCtx, "Incorrect arguments to EXECUTE")
+		}
+		cwft.proc.SetPrepareParams(prepareStmt.params)
+	} else if len(execPlan.Args) > 0 {
+		if len(execPlan.Args) != numParams {
+			return nil, nil, originSQL, moerr.NewInvalidInput(requestCtx, "Incorrect arguments to EXECUTE")
+		}
+		params := cwft.proc.GetVector(types.T_text.ToType())
+		paramVals := make([]any, numParams)
+		for i, arg := range execPlan.Args {
+			exprImpl := arg.Expr.(*plan.Expr_V)
+			param, err := cwft.proc.GetResolveVariableFunc()(exprImpl.V.Name, exprImpl.V.System, exprImpl.V.Global)
+			if err != nil {
+				return nil, nil, originSQL, err
+			}
+			if param == nil {
+				return nil, nil, originSQL, moerr.NewInvalidInput(requestCtx, "Incorrect arguments to EXECUTE")
+			}
+			err = util.AppendAnyToStringVector(cwft.proc, param, params)
+			if err != nil {
+				return nil, nil, originSQL, err
+			}
+			paramVals[i] = param
+		}
+		cwft.proc.SetPrepareParams(params)
+		cwft.paramVals = paramVals
+	} else {
+		if numParams > 0 {
+			return nil, nil, originSQL, moerr.NewInvalidInput(requestCtx, "Incorrect arguments to EXECUTE")
+		}
+	}
+	return preparePlan.Plan, prepareStmt.PrepareStmt, originSQL, nil
 }

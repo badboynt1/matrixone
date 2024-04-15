@@ -44,6 +44,9 @@ var (
 	ErrLockConflict = moerr.NewLockConflictNoCtx()
 )
 
+// Option lockservice option
+type Option func(s *service)
+
 // LockStorage the store that holds the locks, a storage instance is corresponding to
 // all the locks of a table. The LockStorage no need to be thread-safe.
 //
@@ -112,7 +115,7 @@ type LockService interface {
 	// GetWaitingList get special txnID's waiting list
 	GetWaitingList(ctx context.Context, txnID []byte) (bool, []pb.WaitTxn, error)
 	// ForceRefreshLockTableBinds force refresh all lock tables binds
-	ForceRefreshLockTableBinds(targets ...uint64)
+	ForceRefreshLockTableBinds(targets []uint64, matcher func(bind pb.LockTable) bool)
 	// GetLockTableBind returns lock table bind
 	GetLockTableBind(group uint32, tableID uint64) (pb.LockTable, error)
 	// IterLocks iter all locks on current lock service. len(keys) == 2 if is range lock,

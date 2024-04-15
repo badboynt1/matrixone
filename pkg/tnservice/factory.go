@@ -16,6 +16,7 @@ package tnservice
 
 import (
 	"context"
+	"math"
 
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/common/mpool"
@@ -145,6 +146,7 @@ func (s *store) newTAEStorage(ctx context.Context, shard metadata.TNShard, facto
 	logtailServerCfg := &options.LogtailServerCfg{
 		RpcMaxMessageSize:      int64(s.cfg.LogtailServer.RpcMaxMessageSize),
 		RpcEnableChecksum:      s.cfg.LogtailServer.RpcEnableChecksum,
+		RPCStreamPoisonTime:    s.cfg.LogtailServer.LogtailRPCStreamPoisonTime.Duration,
 		LogtailCollectInterval: s.cfg.LogtailServer.LogtailCollectInterval.Duration,
 		ResponseSendTimeout:    s.cfg.LogtailServer.LogtailResponseSendTimeout.Duration,
 	}
@@ -154,6 +156,11 @@ func (s *store) newTAEStorage(ctx context.Context, shard metadata.TNShard, facto
 	if err != nil {
 		return nil, err
 	}
+
+	// the previous values
+	//max2LogServiceMsgSizeLimit := s.cfg.RPC.MaxMessageSize
+	// unlimited, divided by 2 to avoid overflow
+	max2LogServiceMsgSizeLimit := uint64(math.MaxUint64 / 2)
 
 	return taestorage.NewTAEStorage(
 		ctx,
@@ -167,6 +174,6 @@ func (s *store) newTAEStorage(ctx context.Context, shard metadata.TNShard, facto
 		logtailServerAddr,
 		logtailServerCfg,
 		s.cfg.Txn.IncrementalDedup == "true",
-		uint64(s.cfg.RPC.MaxMessageSize),
+		max2LogServiceMsgSizeLimit,
 	)
 }

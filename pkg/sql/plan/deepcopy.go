@@ -65,7 +65,6 @@ func DeepCopyOnDupliateKeyCtx(ctx *plan.OnDuplicateKeyCtx) *plan.OnDuplicateKeyC
 		return nil
 	}
 	newCtx := &plan.OnDuplicateKeyCtx{
-		TableDef:       DeepCopyTableDef(ctx.TableDef, true),
 		OnDuplicateIdx: make([]int32, len(ctx.OnDuplicateIdx)),
 	}
 
@@ -143,7 +142,6 @@ func DeepCopyPreInsertUkCtx(ctx *plan.PreInsertUkCtx) *plan.PreInsertUkCtx {
 		PkColumn: ctx.PkColumn,
 		PkType:   DeepCopyType(ctx.PkType),
 		UkType:   DeepCopyType(ctx.UkType),
-		TableDef: DeepCopyTableDef(ctx.TableDef, true),
 	}
 	copy(newCtx.Columns, ctx.Columns)
 
@@ -324,7 +322,7 @@ func DeepCopyColDef(col *plan.ColDef) *plan.ColDef {
 		ColId:     col.ColId,
 		Name:      col.Name,
 		Alg:       col.Alg,
-		Typ:       DeepCopyType(col.Typ),
+		Typ:       col.Typ,
 		Default:   DeepCopyDefault(col.Default),
 		Primary:   col.Primary,
 		Pkidx:     col.Pkidx,
@@ -333,6 +331,8 @@ func DeepCopyColDef(col *plan.ColDef) *plan.ColDef {
 		ClusterBy: col.ClusterBy,
 		Hidden:    col.Hidden,
 		Seqnum:    col.Seqnum,
+		TblName:   col.TblName,
+		DbName:    col.DbName,
 	}
 }
 
@@ -463,6 +463,7 @@ func DeepCopyTableDef(table *plan.TableDef, withCols bool) *plan.TableDef {
 		TableLockType:  table.TableLockType,
 		IsTemporary:    table.IsTemporary,
 		AutoIncrOffset: table.AutoIncrOffset,
+		DbName:         table.DbName,
 	}
 
 	copy(newTable.RefChildTbls, table.RefChildTbls)
@@ -826,7 +827,7 @@ func DeepCopyExpr(expr *Expr) *Expr {
 		return nil
 	}
 	newExpr := &Expr{
-		Typ:         DeepCopyType(expr.Typ),
+		Typ:         expr.Typ,
 		Ndv:         expr.Ndv,
 		Selectivity: expr.Selectivity,
 	}
@@ -980,9 +981,7 @@ func DeepCopyExpr(expr *Expr) *Expr {
 
 	case *plan.Expr_T:
 		newExpr.Expr = &plan.Expr_T{
-			T: &plan.TargetType{
-				Typ: DeepCopyType(item.T.Typ),
-			},
+			T: &plan.TargetType{},
 		}
 
 	case *plan.Expr_Max:

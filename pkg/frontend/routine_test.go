@@ -126,9 +126,8 @@ var newMockWrapper = func(ctrl *gomock.Controller, ses *Session,
 	mcw := mock_frontend.NewMockComputationWrapper(ctrl)
 	mcw.EXPECT().GetAst().Return(stmt).AnyTimes()
 	mcw.EXPECT().GetProcess().Return(proc).AnyTimes()
-	mcw.EXPECT().SetDatabaseName(gomock.Any()).Return(nil).AnyTimes()
 	mcw.EXPECT().GetColumns().Return(columns, nil).AnyTimes()
-	mcw.EXPECT().Compile(gomock.Any(), gomock.Any(), gomock.Any()).Return(runner, nil).AnyTimes()
+	mcw.EXPECT().Compile(gomock.Any(), gomock.Any()).Return(runner, nil).AnyTimes()
 	mcw.EXPECT().GetUUID().Return(uuid[:]).AnyTimes()
 	mcw.EXPECT().RecordExecPlan(gomock.Any()).Return(nil).AnyTimes()
 	mcw.EXPECT().GetLoadTag().Return(false).AnyTimes()
@@ -167,7 +166,7 @@ func Test_ConnectionCount(t *testing.T) {
 			}
 			stmts = append(stmts, cmdFieldStmt)
 		} else {
-			stmts, err = parsers.Parse(proc.Ctx, dialect.MYSQL, input.getSql(), 1)
+			stmts, err = parsers.Parse(proc.Ctx, dialect.MYSQL, input.getSql(), 1, 0)
 			if err != nil {
 				return nil, err
 			}

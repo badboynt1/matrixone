@@ -450,11 +450,12 @@ func TestGetSimpleExprValue(t *testing.T) {
 			{"set @@x=-x", true, nil},
 		}
 		ctrl := gomock.NewController(t)
-		ses := NewSession(&FakeProtocol{}, testutil.NewProc().Mp(), config.NewParameterUnit(nil, mock_frontend.NewMockEngine(ctrl), mock_frontend.NewMockTxnClient(ctrl), nil), GSysVariables, false, nil, nil)
+		ses := newTestSession(t, ctrl)
+		//ses := NewSession(&FakeProtocol{}, testutil.NewProc().Mp(), config.NewParameterUnit(nil, mock_frontend.NewMockEngine(ctrl), mock_frontend.NewMockTxnClient(ctrl), nil), GSysVariables, false, nil, nil)
 		ses.txnCompileCtx.SetProcess(testutil.NewProc())
 		ses.requestCtx = ctx
 		for _, kase := range kases {
-			stmt, err := parsers.ParseOne(ctx, dialect.MYSQL, kase.sql, 1)
+			stmt, err := parsers.ParseOne(ctx, dialect.MYSQL, kase.sql, 1, 0)
 			cvey.So(err, cvey.ShouldBeNil)
 
 			sv, ok := stmt.(*tree.SetVar)
@@ -487,11 +488,12 @@ func TestGetSimpleExprValue(t *testing.T) {
 			{"set @@x=-1.2345670", false, fmt.Sprintf("%v", dec3.Format(7))},
 		}
 		ctrl := gomock.NewController(t)
-		ses := NewSession(&FakeProtocol{}, testutil.NewProc().Mp(), config.NewParameterUnit(nil, mock_frontend.NewMockEngine(ctrl), mock_frontend.NewMockTxnClient(ctrl), nil), GSysVariables, false, nil, nil)
+		ses := newTestSession(t, ctrl)
+		//ses := NewSession(&FakeProtocol{}, testutil.NewProc().Mp(), config.NewParameterUnit(nil, mock_frontend.NewMockEngine(ctrl), mock_frontend.NewMockTxnClient(ctrl), nil), GSysVariables, false, nil, nil)
 		ses.txnCompileCtx.SetProcess(testutil.NewProc())
 		ses.requestCtx = ctx
 		for _, kase := range kases {
-			stmt, err := parsers.ParseOne(ctx, dialect.MYSQL, kase.sql, 1)
+			stmt, err := parsers.ParseOne(ctx, dialect.MYSQL, kase.sql, 1, 0)
 			cvey.So(err, cvey.ShouldBeNil)
 
 			sv, ok := stmt.(*tree.SetVar)
@@ -608,7 +610,6 @@ func TestGetExprValue(t *testing.T) {
 
 		table.EXPECT().TableDefs(gomock.Any()).Return(defs, nil).AnyTimes()
 		table.EXPECT().GetEngineType().Return(engine.Disttae).AnyTimes()
-		table.EXPECT().Stats(gomock.Any(), gomock.Any(), gomock.Any()).Return(false).AnyTimes()
 
 		var ranges memoryengine.ShardIdSlice
 		id := make([]byte, 8)
@@ -630,8 +631,11 @@ func TestGetExprValue(t *testing.T) {
 		ws.EXPECT().GetSQLCount().AnyTimes()
 		ws.EXPECT().StartStatement().AnyTimes()
 		ws.EXPECT().EndStatement().AnyTimes()
-		ws.EXPECT().WriteOffset().Return(uint64(0)).AnyTimes()
+		ws.EXPECT().GetSnapshotWriteOffset().Return(0).AnyTimes()
+		ws.EXPECT().UpdateSnapshotWriteOffset().AnyTimes()
 		ws.EXPECT().Adjust(gomock.Any()).AnyTimes()
+		ws.EXPECT().CloneSnapshotWS().AnyTimes()
+		ws.EXPECT().BindTxnOp(gomock.Any()).AnyTimes()
 
 		txnOperator := mock_frontend.NewMockTxnOperator(ctrl)
 		txnOperator.EXPECT().Commit(gomock.Any()).Return(nil).AnyTimes()
@@ -639,7 +643,10 @@ func TestGetExprValue(t *testing.T) {
 		txnOperator.EXPECT().GetWorkspace().Return(ws).AnyTimes()
 		txnOperator.EXPECT().Txn().Return(txn.TxnMeta{}).AnyTimes()
 		txnOperator.EXPECT().ResetRetry(gomock.Any()).AnyTimes()
-
+		txnOperator.EXPECT().TxnOptions().Return(txn.TxnOptions{}).AnyTimes()
+		txnOperator.EXPECT().NextSequence().Return(uint64(0)).AnyTimes()
+		txnOperator.EXPECT().EnterRunSql().Return().AnyTimes()
+		txnOperator.EXPECT().ExitRunSql().Return().AnyTimes()
 		txnClient := mock_frontend.NewMockTxnClient(ctrl)
 		txnClient.EXPECT().New(gomock.Any(), gomock.Any(), gomock.Any()).Return(txnOperator, nil).AnyTimes()
 
@@ -659,7 +666,7 @@ func TestGetExprValue(t *testing.T) {
 		exe.SetSession(ses)
 		for _, kase := range kases {
 			fmt.Println("++++>", kase.sql)
-			stmt, err := parsers.ParseOne(ctx, dialect.MYSQL, kase.sql, 1)
+			stmt, err := parsers.ParseOne(ctx, dialect.MYSQL, kase.sql, 1, 0)
 			cvey.So(err, cvey.ShouldBeNil)
 
 			sv, ok := stmt.(*tree.SetVar)
@@ -671,9 +678,9 @@ func TestGetExprValue(t *testing.T) {
 				cvey.So(err, cvey.ShouldBeNil)
 				switch ret := value.(type) {
 				case *plan.Expr:
-					if types.T(ret.GetTyp().GetId()) == types.T_decimal64 {
+					if types.T(ret.GetTyp().Id) == types.T_decimal64 {
 						cvey.So(ret.GetLit().GetDecimal64Val().GetA(), cvey.ShouldEqual, kase.want)
-					} else if types.T(ret.GetTyp().GetId()) == types.T_decimal128 {
+					} else if types.T(ret.GetTyp().Id) == types.T_decimal128 {
 						temp := kase.want.(types.Decimal128)
 						cvey.So(uint64(ret.GetLit().GetDecimal128Val().GetA()), cvey.ShouldEqual, temp.B0_63)
 						cvey.So(uint64(ret.GetLit().GetDecimal128Val().GetB()), cvey.ShouldEqual, temp.B64_127)
@@ -730,10 +737,13 @@ func TestGetExprValue(t *testing.T) {
 		ws.EXPECT().IncrStatementID(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		ws.EXPECT().StartStatement().AnyTimes()
 		ws.EXPECT().EndStatement().AnyTimes()
-		ws.EXPECT().WriteOffset().Return(uint64(0)).AnyTimes()
+		ws.EXPECT().GetSnapshotWriteOffset().Return(0).AnyTimes()
+		ws.EXPECT().UpdateSnapshotWriteOffset().AnyTimes()
 		ws.EXPECT().Adjust(uint64(0)).AnyTimes()
 		ws.EXPECT().IncrSQLCount().AnyTimes()
 		ws.EXPECT().GetSQLCount().AnyTimes()
+		ws.EXPECT().CloneSnapshotWS().AnyTimes()
+		ws.EXPECT().BindTxnOp(gomock.Any()).AnyTimes()
 
 		txnOperator := mock_frontend.NewMockTxnOperator(ctrl)
 		txnOperator.EXPECT().Commit(gomock.Any()).Return(nil).AnyTimes()
@@ -741,7 +751,10 @@ func TestGetExprValue(t *testing.T) {
 		txnOperator.EXPECT().GetWorkspace().Return(ws).AnyTimes()
 		txnOperator.EXPECT().Txn().Return(txn.TxnMeta{}).AnyTimes()
 		txnOperator.EXPECT().ResetRetry(gomock.Any()).AnyTimes()
-
+		txnOperator.EXPECT().TxnOptions().Return(txn.TxnOptions{}).AnyTimes()
+		txnOperator.EXPECT().NextSequence().Return(uint64(0)).AnyTimes()
+		txnOperator.EXPECT().EnterRunSql().Return().AnyTimes()
+		txnOperator.EXPECT().ExitRunSql().Return().AnyTimes()
 		txnClient := mock_frontend.NewMockTxnClient(ctrl)
 		txnClient.EXPECT().New(gomock.Any(), gomock.Any(), gomock.Any()).Return(txnOperator, nil).AnyTimes()
 
@@ -759,7 +772,7 @@ func TestGetExprValue(t *testing.T) {
 		exe.ChooseDoQueryFunc(pu.SV.EnableDoComQueryInProgress)
 		exe.SetSession(ses)
 		for _, kase := range kases {
-			stmt, err := parsers.ParseOne(ctx, dialect.MYSQL, kase.sql, 1)
+			stmt, err := parsers.ParseOne(ctx, dialect.MYSQL, kase.sql, 1, 0)
 			cvey.So(err, cvey.ShouldBeNil)
 
 			sv, ok := stmt.(*tree.SetVar)
@@ -1031,4 +1044,45 @@ func Test_makeExecuteSql(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_getVariableValue(t *testing.T) {
+	type args struct {
+		varDefault interface{}
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{name: "0.1", args: args{varDefault: 0.1}, want: "0.100000"},
+		{name: "0.000001", args: args{varDefault: 0.000001}, want: "0.000001"},
+		{name: "0.0000009", args: args{varDefault: 0.0000009}, want: "9.000000e-07"},
+		{name: "7.43e-14", args: args{varDefault: 7.43e-14}, want: "7.430000e-14"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getVariableValue(tt.args.varDefault)
+			assert.Equalf(t, tt.want, got, "getVariableValue(%v)", tt.args.varDefault)
+		})
+	}
+}
+
+var _ error = &testErr{}
+
+type testErr struct {
+}
+
+func (t testErr) Error() string {
+	return "test"
+}
+
+func Test_isErrorRollbackWholeTxn(t *testing.T) {
+	assert.Equal(t, false, isErrorRollbackWholeTxn(nil))
+	assert.Equal(t, false, isErrorRollbackWholeTxn(&testError{}))
+	assert.Equal(t, true, isErrorRollbackWholeTxn(moerr.NewDeadLockDetectedNoCtx()))
+	assert.Equal(t, true, isErrorRollbackWholeTxn(moerr.NewLockTableBindChangedNoCtx()))
+	assert.Equal(t, true, isErrorRollbackWholeTxn(moerr.NewLockTableNotFoundNoCtx()))
+	assert.Equal(t, true, isErrorRollbackWholeTxn(moerr.NewDeadlockCheckBusyNoCtx()))
+	assert.Equal(t, true, isErrorRollbackWholeTxn(moerr.NewLockConflictNoCtx()))
 }

@@ -34,6 +34,8 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
 	"github.com/matrixorigin/matrixone/pkg/pb/timestamp"
 	"github.com/matrixorigin/matrixone/pkg/pb/txn"
+	"github.com/matrixorigin/matrixone/pkg/txn/client"
+	"github.com/matrixorigin/matrixone/pkg/txn/trace"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
 )
@@ -101,7 +103,7 @@ func genCreateDatabaseTuple(sql string, accountId, userId, roleId uint32,
 	return bat, nil
 }
 
-func genDropDatabaseTuple(id uint64, name string, m *mpool.MPool) (*batch.Batch, error) {
+func genDropDatabaseTuple(rowid types.Rowid, id uint64, name string, m *mpool.MPool) (*batch.Batch, error) {
 	bat := batch.NewWithSize(2)
 	bat.Attrs = append(bat.Attrs, catalog.MoDatabaseSchema[:2]...)
 	bat.SetRowCount(1)
@@ -125,6 +127,13 @@ func genDropDatabaseTuple(id uint64, name string, m *mpool.MPool) (*batch.Batch,
 			return nil, err
 		}
 	}
+	//add the rowid vector as the first one in the batch
+	vec := vector.NewVec(types.T_Rowid.ToType())
+	if err = vector.AppendFixed(vec, rowid, false, m); err != nil {
+		return nil, err
+	}
+	bat.Vecs = append([]*vector.Vector{vec}, bat.Vecs...)
+	bat.Attrs = append([]string{catalog.Row_ID}, bat.Attrs...)
 	return bat, nil
 }
 
@@ -800,7 +809,7 @@ func newStringConstVal(v string) *plan.Expr {
 
 func newColumnExpr(pos int, typ *plan.Type, name string) *plan.Expr {
 	return &plan.Expr{
-		Typ: typ,
+		Typ: *typ,
 		Expr: &plan.Expr_Col{
 			Col: &plan.ColRef{
 				Name:   name,
@@ -810,7 +819,7 @@ func newColumnExpr(pos int, typ *plan.Type, name string) *plan.Expr {
 	}
 }
 
-func genWriteReqs(ctx context.Context, writes []Entry, tid string) ([]txn.TxnRequest, error) {
+func genWriteReqs(ctx context.Context, writes []Entry, op client.TxnOperator) ([]txn.TxnRequest, error) {
 	mq := make(map[string]DNStore)
 	mp := make(map[string][]*api.Entry)
 	v := ctx.Value(defines.PkCheckByTN{})
@@ -835,7 +844,9 @@ func genWriteReqs(ctx context.Context, writes []Entry, tid string) ([]txn.TxnReq
 			continue
 		}
 		if e.tableId == catalog.MO_TABLES_ID && (e.typ == INSERT || e.typ == INSERT_TXN) {
-			logutil.Infof("precommit: create table: %s-%v", tid, vector.MustStrCol(e.bat.GetVector(1+catalog.MO_TABLES_REL_NAME_IDX)))
+			logutil.Infof("precommit: create table: %s-%v",
+				op.Txn().DebugString(),
+				vector.MustStrCol(e.bat.GetVector(1+catalog.MO_TABLES_REL_NAME_IDX)))
 		}
 		if v != nil {
 			e.pkChkByTN = v.(int8)
@@ -851,6 +862,7 @@ func genWriteReqs(ctx context.Context, writes []Entry, tid string) ([]txn.TxnReq
 	}
 	reqs := make([]txn.TxnRequest, 0, len(mp))
 	for k := range mp {
+		trace.GetService().TxnCommit(op, mp[k])
 		payload, err := types.Encode(&api.PrecommitWriteCmd{EntryList: mp[k]})
 		if err != nil {
 			return nil, err
@@ -1482,7 +1494,7 @@ func groupBlocksToObjects(blkInfos []*objectio.BlockInfo, dop int) ([][]*objecti
 }
 
 func newBlockReaders(ctx context.Context, fs fileservice.FileService, tblDef *plan.TableDef,
-	primarySeqnum int, ts timestamp.Timestamp, num int, expr *plan.Expr,
+	ts timestamp.Timestamp, num int, expr *plan.Expr,
 	proc *process.Process) []*blockReader {
 	rds := make([]*blockReader, num)
 	for i := 0; i < num; i++ {
@@ -1507,7 +1519,7 @@ func distributeBlocksToBlockReaders(rds []*blockReader, numOfReaders int, numOfB
 		}
 	}
 	scanType := NORMAL
-	if numOfBlocks < SMALLSCAN_THRESHOLD {
+	if numOfBlocks < numOfReaders*SMALLSCAN_THRESHOLD {
 		scanType = SMALL
 	} else if (numOfReaders * LARGESCAN_THRESHOLD) <= numOfBlocks {
 		scanType = LARGE

@@ -60,7 +60,7 @@ func NewMinioSDK(
 
 	// credentials
 	var credentialProviders []credentials.Provider
-	if !args.NoDefaultCredentials {
+	if args.shouldLoadDefaultCredentials() {
 		credentialProviders = append(credentialProviders,
 			// aws env
 			new(credentials.EnvAWS),
@@ -187,16 +187,18 @@ func NewMinioSDK(
 		zap.Any("arguments", args),
 	)
 
-	// validate
-	ok, err := client.BucketExists(ctx, args.Bucket)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, moerr.NewInternalErrorNoCtx(
-			"bad s3 config, no such bucket or no permissions: %v",
-			args.Bucket,
-		)
+	if !args.NoBucketValidation {
+		// validate
+		ok, err := client.BucketExists(ctx, args.Bucket)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, moerr.NewInternalErrorNoCtx(
+				"bad s3 config, no such bucket or no permissions: %v",
+				args.Bucket,
+			)
+		}
 	}
 
 	return &MinioSDK{
@@ -427,10 +429,6 @@ func (a *MinioSDK) deleteSingle(ctx context.Context, key string) error {
 func (a *MinioSDK) listObjects(ctx context.Context, prefix string, marker string) (minio.ListBucketResult, error) {
 	ctx, task := gotrace.NewTask(ctx, "MinioSDK.listObjects")
 	defer task.End()
-	t0 := time.Now()
-	defer func() {
-		FSProfileHandler.AddSample(time.Since(t0))
-	}()
 	perfcounter.Update(ctx, func(counter *perfcounter.CounterSet) {
 		counter.FileService.S3.List.Add(1)
 	}, a.perfCounterSets...)
@@ -453,10 +451,6 @@ func (a *MinioSDK) listObjects(ctx context.Context, prefix string, marker string
 func (a *MinioSDK) statObject(ctx context.Context, key string) (minio.ObjectInfo, error) {
 	ctx, task := gotrace.NewTask(ctx, "MinioSDK.statObject")
 	defer task.End()
-	t0 := time.Now()
-	defer func() {
-		FSProfileHandler.AddSample(time.Since(t0))
-	}()
 	perfcounter.Update(ctx, func(counter *perfcounter.CounterSet) {
 		counter.FileService.S3.Head.Add(1)
 	}, a.perfCounterSets...)
@@ -484,10 +478,6 @@ func (a *MinioSDK) putObject(
 ) (minio.UploadInfo, error) {
 	ctx, task := gotrace.NewTask(ctx, "MinioSDK.putObject")
 	defer task.End()
-	t0 := time.Now()
-	defer func() {
-		FSProfileHandler.AddSample(time.Since(t0))
-	}()
 	perfcounter.Update(ctx, func(counter *perfcounter.CounterSet) {
 		counter.FileService.S3.Put.Add(1)
 	}, a.perfCounterSets...)
@@ -506,10 +496,6 @@ func (a *MinioSDK) putObject(
 func (a *MinioSDK) getObject(ctx context.Context, key string, min *int64, max *int64) (io.ReadCloser, error) {
 	ctx, task := gotrace.NewTask(ctx, "MinioSDK.getObject")
 	defer task.End()
-	t0 := time.Now()
-	defer func() {
-		FSProfileHandler.AddSample(time.Since(t0))
-	}()
 	perfcounter.Update(ctx, func(counter *perfcounter.CounterSet) {
 		counter.FileService.S3.Get.Add(1)
 	}, a.perfCounterSets...)
@@ -545,10 +531,6 @@ func (a *MinioSDK) getObject(ctx context.Context, key string, min *int64, max *i
 func (a *MinioSDK) deleteObject(ctx context.Context, key string) (any, error) {
 	ctx, task := gotrace.NewTask(ctx, "MinioSDK.deleteObject")
 	defer task.End()
-	t0 := time.Now()
-	defer func() {
-		FSProfileHandler.AddSample(time.Since(t0))
-	}()
 	perfcounter.Update(ctx, func(counter *perfcounter.CounterSet) {
 		counter.FileService.S3.Delete.Add(1)
 	}, a.perfCounterSets...)
@@ -568,10 +550,6 @@ func (a *MinioSDK) deleteObject(ctx context.Context, key string) (any, error) {
 func (a *MinioSDK) deleteObjects(ctx context.Context, keys ...string) (any, error) {
 	ctx, task := gotrace.NewTask(ctx, "MinioSDK.deleteObjects")
 	defer task.End()
-	t0 := time.Now()
-	defer func() {
-		FSProfileHandler.AddSample(time.Since(t0))
-	}()
 	perfcounter.Update(ctx, func(counter *perfcounter.CounterSet) {
 		counter.FileService.S3.DeleteMulti.Add(1)
 	}, a.perfCounterSets...)

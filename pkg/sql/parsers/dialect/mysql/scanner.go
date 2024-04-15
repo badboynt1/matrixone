@@ -148,6 +148,7 @@ func (s *Scanner) Scan() (int, string) {
 			s.incN(2)
 			return ASSIGNMENT, ""
 		}
+
 		// Like mysql -h ::1 ?
 		id, str := s.scanBindVar()
 		if id == LEX_ERROR {
@@ -231,9 +232,18 @@ func (s *Scanner) Scan() (int, string) {
 			return s.scanString(ch, STRING)
 		case s.cur() == '|':
 			return s.scanString(ch, STRING)
+		case isDigit(s.cur()):
+			return s.scanString(ch, STRING)
 		default:
 			return s.Scan()
 		}
+	case ch == '#':
+		s.inc()
+		id, str := s.scanCommentTypeLine(1)
+		if id == LEX_ERROR {
+			return id, str
+		}
+		return s.Scan()
 	default:
 		return s.stepBackOneChar(ch)
 	}
@@ -733,6 +743,7 @@ func (s *Scanner) scanIdentifier(isVariable bool) (int, string) {
 		if ch == '@' {
 			break
 		}
+
 		s.inc()
 	}
 	keywordName := s.buf[start:s.Pos]

@@ -31,7 +31,7 @@ import (
 func MakePlan2Decimal64ExprWithType(v types.Decimal64, typ *Type) *plan.Expr {
 	rawA := int64(v)
 	return &plan.Expr{
-		Typ: typ,
+		Typ: *typ,
 		Expr: &plan.Expr_Lit{
 			Lit: &Const{
 				Isnull: false,
@@ -49,7 +49,7 @@ func MakePlan2Decimal128ExprWithType(v types.Decimal128, typ *Type) *plan.Expr {
 	rawA := v.B0_63
 	rawB := v.B64_127
 	return &plan.Expr{
-		Typ: typ,
+		Typ: *typ,
 		Expr: &plan.Expr_Lit{
 			Lit: &Const{
 				Isnull: false,
@@ -95,7 +95,7 @@ func makePlan2DateConstNullExpr(t types.T) *plan.Expr {
 				Isnull: true,
 			},
 		},
-		Typ: &plan.Type{
+		Typ: plan.Type{
 			Id:          int32(t),
 			NotNullable: false,
 		},
@@ -109,7 +109,7 @@ func makePlan2Decimal128ConstNullExpr() *plan.Expr {
 				Isnull: true,
 			},
 		},
-		Typ: &plan.Type{
+		Typ: plan.Type{
 			Id:          int32(types.T_decimal128),
 			Width:       38,
 			Scale:       0,
@@ -125,7 +125,7 @@ func makePlan2NullConstExprWithType() *plan.Expr {
 				Isnull: true,
 			},
 		},
-		Typ: &plan.Type{
+		Typ: plan.Type{
 			Id:          int32(types.T_any),
 			NotNullable: false,
 		},
@@ -144,7 +144,7 @@ func makePlan2BoolConstExpr(v bool) *plan.Expr_Lit {
 func makePlan2BoolConstExprWithType(v bool) *plan.Expr {
 	return &plan.Expr{
 		Expr: makePlan2BoolConstExpr(v),
-		Typ: &plan.Type{
+		Typ: plan.Type{
 			Id:          int32(types.T_bool),
 			NotNullable: true,
 		},
@@ -165,11 +165,35 @@ var MakePlan2Int64ConstExprWithType = makePlan2Int64ConstExprWithType
 func makePlan2Int64ConstExprWithType(v int64) *plan.Expr {
 	return &plan.Expr{
 		Expr: makePlan2Int64ConstExpr(v),
-		Typ: &plan.Type{
+		Typ: plan.Type{
 			Id:          int32(types.T_int64),
 			NotNullable: true,
 		},
 	}
+}
+
+var MakePlan2Vecf32ConstExprWithType = makePlan2Vecf32ConstExprWithType
+
+// makePlan2Vecf32ConstExprWithType makes a vecf32 const expr.
+// usage: makePlan2Vecf32ConstExprWithType("[1,2,3]", 3)
+func makePlan2Vecf32ConstExprWithType(v string, l int32) *plan.Expr {
+	return &plan.Expr{
+		Expr: makePlan2Vecf32ConstExpr(v),
+		Typ: plan.Type{
+			Id:          int32(types.T_array_float32),
+			Width:       l,
+			NotNullable: true,
+		},
+	}
+}
+
+func makePlan2Vecf32ConstExpr(v string) *plan.Expr_Lit {
+	return &plan.Expr_Lit{Lit: &plan.Literal{
+		Isnull: false,
+		Value: &plan.Literal_Sval{
+			Sval: v,
+		},
+	}}
 }
 
 var MakePlan2StringVecExprWithType = makePlan2StringVecExprWithType
@@ -182,7 +206,7 @@ func makePlan2StringVecExprWithType(mp *mpool.MPool, vals ...string) *plan.Expr 
 	data, _ := vec.MarshalBinary()
 	vec.Free(mp)
 	return &plan.Expr{
-		Typ: &plan.Type{
+		Typ: plan.Type{
 			Id: int32(types.T_tuple),
 		},
 		Expr: &plan.Expr_Vec{
@@ -204,7 +228,7 @@ func makePlan2Int64VecExprWithType(mp *mpool.MPool, vals ...int64) *plan.Expr {
 	data, _ := vec.MarshalBinary()
 	vec.Free(mp)
 	return &plan.Expr{
-		Typ: &plan.Type{
+		Typ: plan.Type{
 			Id: int32(types.T_tuple),
 		},
 		Expr: &plan.Expr_Vec{
@@ -228,7 +252,7 @@ func makePlan2Uint64ConstExpr(v uint64) *plan.Expr_Lit {
 func makePlan2Uint64ConstExprWithType(v uint64) *plan.Expr {
 	return &plan.Expr{
 		Expr: makePlan2Uint64ConstExpr(v),
-		Typ: &plan.Type{
+		Typ: plan.Type{
 			Id:          int32(types.T_uint64),
 			NotNullable: true,
 		},
@@ -249,7 +273,7 @@ var MakePlan2Float64ConstExprWithType = makePlan2Float64ConstExprWithType
 func makePlan2Float64ConstExprWithType(v float64) *plan.Expr {
 	return &plan.Expr{
 		Expr: makePlan2Float64ConstExpr(v),
-		Typ: &plan.Type{
+		Typ: plan.Type{
 			Id:          int32(types.T_float64),
 			NotNullable: true,
 		},
@@ -279,7 +303,7 @@ func makePlan2StringConstExprWithType(v string, isBin ...bool) *plan.Expr {
 	}
 	return &plan.Expr{
 		Expr: makePlan2StringConstExpr(v, isBin...),
-		Typ: &plan.Type{
+		Typ: plan.Type{
 			Id:          id,
 			NotNullable: true,
 			Width:       width,
@@ -297,7 +321,7 @@ func makePlan2NullTextConstExpr(v string) *plan.Expr_Lit {
 func MakePlan2NullTextConstExprWithType(v string) *plan.Expr {
 	return &plan.Expr{
 		Expr: makePlan2NullTextConstExpr(v),
-		Typ: &plan.Type{
+		Typ: plan.Type{
 			Id:          int32(types.T_text),
 			NotNullable: false,
 			Width:       int32(utf8.RuneCountInString(v)),
@@ -307,12 +331,12 @@ func MakePlan2NullTextConstExprWithType(v string) *plan.Expr {
 
 func makePlan2CastExpr(ctx context.Context, expr *Expr, targetType *Type) (*Expr, error) {
 	var err error
-	if isSameColumnType(expr.Typ, targetType) {
+	if isSameColumnType(&expr.Typ, targetType) {
 		return expr, nil
 	}
 	targetType.NotNullable = expr.Typ.NotNullable
 	if types.T(expr.Typ.Id) == types.T_any {
-		expr.Typ = targetType
+		expr.Typ = *targetType
 		return expr, nil
 	}
 
@@ -329,11 +353,9 @@ func makePlan2CastExpr(ctx context.Context, expr *Expr, targetType *Type) (*Expr
 		return nil, err
 	}
 	t := &plan.Expr{
-		Typ: targetType,
+		Typ: *targetType,
 		Expr: &plan.Expr_T{
-			T: &plan.TargetType{
-				Typ: targetType,
-			},
+			T: &plan.TargetType{},
 		},
 	}
 	return &plan.Expr{
@@ -343,7 +365,7 @@ func makePlan2CastExpr(ctx context.Context, expr *Expr, targetType *Type) (*Expr
 				Args: []*Expr{expr, t},
 			},
 		},
-		Typ: targetType,
+		Typ: *targetType,
 	}, nil
 }
 
@@ -408,6 +430,13 @@ func makePlan2Type(typ *types.Type) *plan.Type {
 		Scale: typ.Scale,
 	}
 }
+func makePlan2TypeValue(typ *types.Type) plan.Type {
+	return plan.Type{
+		Id:    int32(typ.Oid),
+		Width: typ.Width,
+		Scale: typ.Scale,
+	}
+}
 
 var MakeTypeByPlan2Type = makeTypeByPlan2Type
 
@@ -423,8 +452,8 @@ func makeTypeByPlan2Expr(expr *plan.Expr) types.Type {
 	return types.New(oid, expr.Typ.Width, expr.Typ.Scale)
 }
 
-func makeHiddenColTyp() *Type {
-	return &Type{
+func makeHiddenColTyp() Type {
+	return Type{
 		Id:    int32(types.T_varchar),
 		Width: types.MaxVarcharLen,
 	}
@@ -448,7 +477,7 @@ func MakeRowIdColDef() *ColDef {
 	return &ColDef{
 		Name:   catalog.Row_ID,
 		Hidden: true,
-		Typ: &Type{
+		Typ: Type{
 			Id: int32(types.T_Rowid),
 		},
 		Default: &plan.Default{

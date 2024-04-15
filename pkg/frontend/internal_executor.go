@@ -154,7 +154,10 @@ func (ie *internalExecutor) Exec(ctx context.Context, sql string, opts ie.Sessio
 	ie.Lock()
 	defer ie.Unlock()
 	sess := ie.newCmdSession(ctx, opts)
-	defer sess.Close()
+	defer func() {
+		sess.Close()
+		ie.executor.SetSession(nil)
+	}()
 	ie.executor.SetSession(sess)
 	ie.proto.stashResult = false
 	if sql == "" {
@@ -167,7 +170,10 @@ func (ie *internalExecutor) Query(ctx context.Context, sql string, opts ie.Sessi
 	ie.Lock()
 	defer ie.Unlock()
 	sess := ie.newCmdSession(ctx, opts)
-	defer sess.Close()
+	defer func() {
+		sess.Close()
+		ie.executor.SetSession(nil)
+	}()
 	ie.executor.SetSession(sess)
 	ie.proto.stashResult = true
 	logutil.Info("internalExecutor new session", trace.ContextField(ctx), zap.String("session uuid", sess.uuid.String()))
@@ -195,6 +201,7 @@ func (ie *internalExecutor) newCmdSession(ctx context.Context, opts ie.SessionOv
 	sess := NewSession(ie.proto, mp, ie.pu, GSysVariables, true, ie.aicm, nil)
 	sess.SetRequestContext(ctx)
 	sess.SetConnectContext(ctx)
+	sess.disableTrace = true
 
 	var t *TenantInfo
 	if accountId, err := defines.GetAccountId(ctx); err == nil {
@@ -202,6 +209,12 @@ func (ie *internalExecutor) newCmdSession(ctx context.Context, opts ie.SessionOv
 			TenantID:      accountId,
 			UserID:        defines.GetUserId(ctx),
 			DefaultRoleID: defines.GetRoleId(ctx),
+		}
+		if accountId == sysAccountID {
+			t.Tenant = sysAccountName // fixme: fix empty tencent value, while do metric collection.
+			t.User = "internal"
+			// more details in authenticateUserCanExecuteStatementWithObjectTypeNone()
+			t.DefaultRole = moAdminRoleName
 		}
 	} else {
 		t, _ = GetTenantInfo(ctx, DefaultTenantMoAdmin)
@@ -431,7 +444,7 @@ func (ip *internalProtocol) ResetStatistics() {
 
 func (ip *internalProtocol) GetStats() string { return "internal unknown stats" }
 
-func (ip *internalProtocol) CalculateOutTrafficBytes() int64 { return 0 }
+func (ip *internalProtocol) CalculateOutTrafficBytes(reset bool) (int64, int64) { return 0, 0 }
 
 func (ip *internalProtocol) sendLocalInfileRequest(filename string) error {
 	return nil
@@ -440,5 +453,15 @@ func (ip *internalProtocol) sendLocalInfileRequest(filename string) error {
 func (ip *internalProtocol) incDebugCount(int) {}
 
 func (ip *internalProtocol) resetDebugCount() []uint64 {
+	return nil
+}
+
+func (ip *internalProtocol) DisableAutoFlush() {
+}
+
+func (ip *internalProtocol) EnableAutoFlush() {
+}
+
+func (ip *internalProtocol) Flush() error {
 	return nil
 }

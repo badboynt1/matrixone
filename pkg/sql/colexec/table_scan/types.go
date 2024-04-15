@@ -26,12 +26,17 @@ import (
 var _ vm.Operator = new(Argument)
 
 type Argument struct {
-	OrderBy []*plan.OrderBySpec
-	Reader  engine.Reader
-	Attrs   []string
+	msgReceiver    *process.MessageReceiver
+	TopValueMsgTag int32
+	OrderBy        []*plan.OrderBySpec
+	Reader         engine.Reader
+	Attrs          []string
+	TableID        uint64
 
 	buf    *batch.Batch
 	tmpBuf *batch.Batch
+
+	maxAllocSize int
 
 	vm.OperatorBase
 }
@@ -77,4 +82,10 @@ func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error)
 		arg.tmpBuf.Clean(proc.Mp())
 		arg.tmpBuf = nil
 	}
+
+	if arg.msgReceiver != nil {
+		arg.msgReceiver.Free()
+	}
+	anal := proc.GetAnalyze(arg.GetIdx(), arg.GetParallelIdx(), arg.GetParallelMajor())
+	anal.Alloc(int64(arg.maxAllocSize))
 }

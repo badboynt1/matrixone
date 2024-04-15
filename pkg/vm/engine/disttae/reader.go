@@ -16,7 +16,6 @@ package disttae
 
 import (
 	"context"
-	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/index"
 	"sort"
 	"time"
 
@@ -34,10 +33,12 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/perfcounter"
 	plan2 "github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"github.com/matrixorigin/matrixone/pkg/testutil"
+	"github.com/matrixorigin/matrixone/pkg/txn/trace"
 	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/disttae/logtailreplay"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/blockio"
+	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/index"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
 	"go.uber.org/zap"
 )
@@ -95,7 +96,7 @@ func (mixin *withFilterMixin) tryUpdateColumns(cols []string) {
 			mixin.columns.seqnums[i] = objectio.SEQNUM_ROWID
 			mixin.columns.colTypes[i] = objectio.RowidType
 		} else {
-			if plan2.GetSortOrder(mixin.tableDef, column) == 0 {
+			if plan2.GetSortOrderByName(mixin.tableDef, column) == 0 {
 				mixin.columns.indexOfFirstSortedColumn = i
 			}
 			colIdx := mixin.tableDef.Name2ColIndex[column]
@@ -227,7 +228,6 @@ func (mixin *withFilterMixin) getNonCompositPKFilter(proc *process.Process, blkC
 	ok, hasNull, searchFunc := getNonCompositePKSearchFuncByExpr(
 		mixin.filterState.expr,
 		mixin.tableDef.Pkey.PkeyColName,
-		mixin.columns.colTypes[mixin.columns.pkPos].Oid,
 		proc,
 	)
 	if !ok || searchFunc == nil {
@@ -287,6 +287,12 @@ func newBlockReader(
 	fs fileservice.FileService,
 	proc *process.Process,
 ) *blockReader {
+	for _, blk := range blks {
+		trace.GetService().TxnReadBlock(
+			proc.TxnOperator,
+			tableDef.TblId,
+			blk.BlockID[:])
+	}
 	r := &blockReader{
 		withFilterMixin: withFilterMixin{
 			ctx:      ctx,
@@ -309,7 +315,18 @@ func (r *blockReader) Close() error {
 }
 
 func (r *blockReader) SetFilterZM(zm objectio.ZoneMap) {
-	r.filterZM = zm.Clone()
+	if !r.filterZM.IsInited() {
+		r.filterZM = zm.Clone()
+		return
+	}
+	if r.desc && r.filterZM.CompareMax(zm) < 0 {
+		r.filterZM = zm.Clone()
+		return
+	}
+	if !r.desc && r.filterZM.CompareMin(zm) > 0 {
+		r.filterZM = zm.Clone()
+		return
+	}
 }
 
 func (r *blockReader) GetOrderBy() []*plan.OrderBySpec {
@@ -322,7 +339,7 @@ func (r *blockReader) SetOrderBy(orderby []*plan.OrderBySpec) {
 
 func (r *blockReader) needReadBlkByZM(i int) bool {
 	zm := r.blockZMS[i]
-	if !r.filterZM.IsInited() || zm.IsInited() {
+	if !r.filterZM.IsInited() || !zm.IsInited() {
 		return true
 	}
 	if r.desc {
@@ -340,8 +357,8 @@ func (r *blockReader) getBlockZMs() {
 	var objDataMeta objectio.ObjectDataMeta
 	var location objectio.Location
 	for i := range r.blks {
+		location = r.blks[i].MetaLocation()
 		if !objectio.IsSameObjectLocVsMeta(location, objDataMeta) {
-			location = r.blks[i].MetaLocation()
 			objMeta, err := objectio.FastLoadObjectMeta(r.ctx, &location, false, r.fs)
 			if err != nil {
 				panic("load object meta error when ordered scan!")
@@ -354,12 +371,12 @@ func (r *blockReader) getBlockZMs() {
 }
 
 func (r *blockReader) sortBlockList() {
-	helper := make([]blockSortHelper, len(r.blks))
+	helper := make([]*blockSortHelper, len(r.blks))
 	for i := range r.blks {
+		helper[i] = &blockSortHelper{}
 		helper[i].blk = r.blks[i]
 		helper[i].zm = r.blockZMS[i]
 	}
-
 	if r.desc {
 		sort.Slice(helper, func(i, j int) bool {
 			zm1 := helper[i].zm
@@ -378,7 +395,7 @@ func (r *blockReader) sortBlockList() {
 			if !zm1.IsInited() {
 				return true
 			}
-			zm2 := helper[i].zm
+			zm2 := helper[j].zm
 			if !zm2.IsInited() {
 				return false
 			}
@@ -394,7 +411,7 @@ func (r *blockReader) sortBlockList() {
 
 func (r *blockReader) deleteFirstNBlocks(n int) {
 	r.blks = r.blks[n:]
-	if r.OrderBy != nil {
+	if len(r.OrderBy) > 0 {
 		r.blockZMS = r.blockZMS[n:]
 	}
 }
@@ -412,7 +429,7 @@ func (r *blockReader) Read(
 	}()
 
 	// for ordered scan, sort blocklist by zonemap info, and then filter by zonemap
-	if r.OrderBy != nil {
+	if len(r.OrderBy) > 0 {
 		if !r.sorted {
 			r.desc = r.OrderBy[0].Flag&plan.OrderBySpec_DESC != 0
 			r.getBlockZMs()
@@ -422,13 +439,12 @@ func (r *blockReader) Read(
 		i := 0
 		for i < len(r.blks) {
 			if r.needReadBlkByZM(i) {
-				r.deleteFirstNBlocks(i)
 				break
 			}
 			i++
 		}
+		r.deleteFirstNBlocks(i)
 	}
-
 	// if the block list is empty, return nil
 	if len(r.blks) == 0 {
 		return nil, nil
@@ -573,12 +589,12 @@ func (r *blockMergeReader) Close() error {
 
 func (r *blockMergeReader) prefetchDeletes() error {
 	//load delta locations for r.blocks.
-	r.table.db.txn.blockId_tn_delete_metaLoc_batch.RLock()
-	defer r.table.db.txn.blockId_tn_delete_metaLoc_batch.RUnlock()
+	r.table.getTxn().blockId_tn_delete_metaLoc_batch.RLock()
+	defer r.table.getTxn().blockId_tn_delete_metaLoc_batch.RUnlock()
 
 	if !r.loaded {
 		for _, info := range r.blks {
-			bats, ok := r.table.db.txn.blockId_tn_delete_metaLoc_batch.data[info.BlockID]
+			bats, ok := r.table.getTxn().blockId_tn_delete_metaLoc_batch.data[info.BlockID]
 
 			if !ok {
 				return nil
@@ -674,22 +690,25 @@ func (r *blockMergeReader) loadDeletes(ctx context.Context, cols []string) error
 
 	//TODO:: if r.table.writes is a map , the time complexity could be O(1)
 	//load deletes from txn.writes for the specified block
-	for _, entry := range r.table.writes {
-		if entry.isGeneratedByTruncate() {
-			continue
-		}
-		if (entry.typ == DELETE || entry.typ == DELETE_TXN) && entry.fileName == "" {
-			vs := vector.MustFixedCol[types.Rowid](entry.bat.GetVector(0))
-			for _, v := range vs {
-				id, offset := v.Decode()
-				if id == info.BlockID {
-					r.buffer = append(r.buffer, int64(offset))
+	r.table.getTxn().forEachTableWrites(
+		r.table.db.databaseId,
+		r.table.tableId,
+		r.table.getTxn().GetSnapshotWriteOffset(), func(entry Entry) {
+			if entry.isGeneratedByTruncate() {
+				return
+			}
+			if (entry.typ == DELETE || entry.typ == DELETE_TXN) && entry.fileName == "" {
+				vs := vector.MustFixedCol[types.Rowid](entry.bat.GetVector(0))
+				for _, v := range vs {
+					id, offset := v.Decode()
+					if id == info.BlockID {
+						r.buffer = append(r.buffer, int64(offset))
+					}
 				}
 			}
-		}
-	}
+		})
 	//load deletes from txn.deletedBlocks.
-	txn := r.table.db.txn
+	txn := r.table.getTxn()
 	txn.deletedBlocks.getDeletedOffsetsByBlock(&info.BlockID, &r.buffer)
 	return nil
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/container/vector"
+	pbplan "github.com/matrixorigin/matrixone/pkg/pb/plan"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec"
 	"github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"github.com/matrixorigin/matrixone/pkg/vm"
@@ -72,11 +73,10 @@ type Argument struct {
 	Typs        []types.Type
 	Conditions  []*plan.Expr
 
-	HashOnPK             bool
-	NeedMergedBatch      bool
-	NeedAllocateSels     bool
-	RuntimeFilterSenders []*colexec.RuntimeFilterChan
-
+	HashOnPK          bool
+	NeedMergedBatch   bool
+	NeedAllocateSels  bool
+	RuntimeFilterSpec *pbplan.RuntimeFilterSpec
 	vm.OperatorBase
 }
 
@@ -111,10 +111,6 @@ func (arg *Argument) Release() {
 	}
 }
 
-func (arg *Argument) SetRuntimeFilterSenders(rfs []*colexec.RuntimeFilterChan) {
-	arg.RuntimeFilterSenders = rfs
-}
-
 func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error) {
 	ctr := arg.ctr
 	if ctr != nil {
@@ -145,6 +141,7 @@ func (ctr *container) cleanEvalVectors(mp *mpool.MPool) {
 			ctr.executor[i].Free()
 		}
 	}
+	ctr.executor = nil
 }
 
 func (ctr *container) cleanHashMap() {

@@ -16,11 +16,12 @@ package mergegroup
 
 import (
 	"bytes"
-
 	"github.com/matrixorigin/matrixone/pkg/common/hashmap"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
+	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/vm"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
+	"runtime"
 )
 
 const argName = "merge_group"
@@ -122,9 +123,23 @@ func (ctr *container) process(bat *batch.Batch, proc *process.Process) error {
 			width := vec.GetType().TypeSize()
 			if vec.GetType().IsVarlen() {
 				if vec.GetType().Width == 0 {
-					width = 128
+					switch vec.GetType().Oid {
+					case types.T_array_float32:
+						width = 128 * 4
+					case types.T_array_float64:
+						width = 128 * 8
+					default:
+						width = 128
+					}
 				} else {
-					width = int(vec.GetType().Width)
+					switch vec.GetType().Oid {
+					case types.T_array_float32:
+						width = int(vec.GetType().Width) * 4
+					case types.T_array_float64:
+						width = int(vec.GetType().Width) * 8
+					default:
+						width = int(vec.GetType().Width)
+					}
 				}
 			}
 			keyWidth += width
@@ -187,6 +202,9 @@ func (ctr *container) processH8(bat *batch.Batch, proc *process.Process) error {
 		defer proc.PutBatch(bat)
 	}
 	for i := 0; i < count; i += hashmap.UnitLimit {
+		if i%(hashmap.UnitLimit*32) == 0 {
+			runtime.Gosched()
+		}
 		n := count - i
 		if n > hashmap.UnitLimit {
 			n = hashmap.UnitLimit
@@ -216,6 +234,9 @@ func (ctr *container) processHStr(bat *batch.Batch, proc *process.Process) error
 		defer proc.PutBatch(bat)
 	}
 	for i := 0; i < count; i += hashmap.UnitLimit { // batch
+		if i%(hashmap.UnitLimit*32) == 0 {
+			runtime.Gosched()
+		}
 		n := count - i
 		if n > hashmap.UnitLimit {
 			n = hashmap.UnitLimit

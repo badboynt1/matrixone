@@ -53,10 +53,8 @@ type Argument struct {
 	rbat         *batch.Batch
 
 	// about runtime filter
-	inFilterCardLimit    int64
-	pass2RuntimeFilter   *vector.Vector
-	RuntimeFilterSpecs   []*plan.RuntimeFilterSpec
-	RuntimeFilterSenders []*colexec.RuntimeFilterChan
+	pass2RuntimeFilter *vector.Vector
+	RuntimeFilterSpec  *plan.RuntimeFilterSpec
 
 	vm.OperatorBase
 }
@@ -90,10 +88,6 @@ func (arg *Argument) Release() {
 	if arg != nil {
 		reuse.Free[Argument](arg, nil)
 	}
-}
-
-func (arg *Argument) SetRuntimeFilterSenders(rfs []*colexec.RuntimeFilterChan) {
-	arg.RuntimeFilterSenders = rfs
 }
 
 func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error) {

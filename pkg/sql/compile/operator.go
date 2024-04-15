@@ -18,6 +18,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/matrixorigin/matrixone/pkg/sql/colexec/indexbuild"
+	"github.com/matrixorigin/matrixone/pkg/sql/colexec/indexjoin"
+
 	"github.com/google/uuid"
 	"github.com/matrixorigin/matrixone/pkg/catalog"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
@@ -223,6 +226,13 @@ func dupInstruction(sourceIns *vm.Instruction, regMap map[*process.WaitRegister]
 		arg.Cond = t.Cond
 		arg.Typs = t.Typs
 		res.Arg = arg
+	case vm.IndexJoin:
+		t := sourceIns.Arg.(*indexjoin.Argument)
+		arg := indexjoin.NewArgument()
+		arg.Result = t.Result
+		arg.Typs = t.Typs
+		arg.RuntimeFilterSpecs = t.RuntimeFilterSpecs
+		res.Arg = arg
 	case vm.LoopLeft:
 		t := sourceIns.Arg.(*loopleft.Argument)
 		arg := loopleft.NewArgument()
@@ -307,6 +317,7 @@ func dupInstruction(sourceIns *vm.Instruction, regMap map[*process.WaitRegister]
 		t := sourceIns.Arg.(*top.Argument)
 		arg := top.NewArgument()
 		arg.Limit = t.Limit
+		arg.TopValueTag = t.TopValueTag
 		arg.Fs = t.Fs
 		res.Arg = arg
 	case vm.Intersect:
@@ -512,7 +523,6 @@ func dupInstruction(sourceIns *vm.Instruction, regMap map[*process.WaitRegister]
 		arg.N = t.N
 		arg.PkName = t.PkName
 		arg.PkTyp = t.PkTyp
-		arg.RuntimeFilterSpecs = t.RuntimeFilterSpecs
 		res.Arg = arg
 	default:
 		panic(fmt.Sprintf("unexpected instruction type '%d' to dup", sourceIns.Op))
@@ -573,21 +583,24 @@ func constructOnduplicateKey(n *plan.Node, eg engine.Engine) *onduplicatekey.Arg
 	arg.Engine = eg
 	arg.OnDuplicateIdx = oldCtx.OnDuplicateIdx
 	arg.OnDuplicateExpr = oldCtx.OnDuplicateExpr
-	arg.TableDef = oldCtx.TableDef
+	arg.Attrs = oldCtx.Attrs
+	arg.InsertColCount = oldCtx.InsertColCount
+	arg.UniqueCols = oldCtx.UniqueCols
+	arg.UniqueColCheckExpr = oldCtx.UniqueColCheckExpr
 	arg.IsIgnore = oldCtx.IsIgnore
 	return arg
 }
 
-func constructFuzzyFilter(c *Compile, n, left, right *plan.Node) *fuzzyfilter.Argument {
+func constructFuzzyFilter(c *Compile, n, right *plan.Node) *fuzzyfilter.Argument {
 	pkName := n.TableDef.Pkey.PkeyColName
 	var pkTyp *plan.Type
 	if pkName == catalog.CPrimaryKeyColName {
-		pkTyp = n.TableDef.Pkey.CompPkeyCol.Typ
+		pkTyp = &n.TableDef.Pkey.CompPkeyCol.Typ
 	} else {
 		cols := n.TableDef.Cols
 		for _, c := range cols {
 			if c.Name == pkName {
-				pkTyp = c.Typ
+				pkTyp = &c.Typ
 			}
 		}
 	}
@@ -595,11 +608,10 @@ func constructFuzzyFilter(c *Compile, n, left, right *plan.Node) *fuzzyfilter.Ar
 	arg := fuzzyfilter.NewArgument()
 	arg.PkName = pkName
 	arg.PkTyp = pkTyp
-	arg.N = right.Stats.Cost
-	arg.RuntimeFilterSpecs = n.RuntimeFilterBuildList
-
-	registerRuntimeFilters(arg, c, n.RuntimeFilterBuildList, 0)
-
+	arg.N = right.Stats.Outcnt
+	if len(n.RuntimeFilterBuildList) > 0 {
+		arg.RuntimeFilterSpec = n.RuntimeFilterBuildList[0]
+	}
 	return arg
 }
 
@@ -652,7 +664,7 @@ func constructPreInsertSk(n *plan.Node, proc *process.Process) (*preinsertsecond
 	return arg, nil
 }
 
-func constructLockOp(n *plan.Node, proc *process.Process, eng engine.Engine) (*lockop.Argument, error) {
+func constructLockOp(n *plan.Node, eng engine.Engine) (*lockop.Argument, error) {
 	arg := lockop.NewArgumentByEngine(eng)
 	for _, target := range n.LockTargets {
 		typ := plan2.MakeTypeByPlan2Type(target.GetPrimaryColTyp())
@@ -784,6 +796,9 @@ func constructTop(n *plan.Node, topN int64) *top.Argument {
 	arg := top.NewArgument()
 	arg.Fs = n.OrderBy
 	arg.Limit = topN
+	if len(n.SendMsgList) > 0 {
+		arg.TopValueTag = n.SendMsgList[0].MsgTag
+	}
 	return arg
 }
 
@@ -994,7 +1009,7 @@ func constructFill(n *plan.Node) *fill.Argument {
 	return arg
 }
 
-func constructTimeWindow(ctx context.Context, n *plan.Node, proc *process.Process) *timewin.Argument {
+func constructTimeWindow(_ context.Context, n *plan.Node) *timewin.Argument {
 	var aggs []agg.Aggregate
 	var typs []types.Type
 	var wStart, wEnd bool
@@ -1055,7 +1070,7 @@ func constructTimeWindow(ctx context.Context, n *plan.Node, proc *process.Proces
 	return arg
 }
 
-func constructWindow(ctx context.Context, n *plan.Node, proc *process.Process) *window.Argument {
+func constructWindow(_ context.Context, n *plan.Node, proc *process.Process) *window.Argument {
 	aggs := make([]agg.Aggregate, len(n.WinSpecList))
 	typs := make([]types.Type, len(n.WinSpecList))
 	for i, expr := range n.WinSpecList {
@@ -1078,9 +1093,11 @@ func constructWindow(ctx context.Context, n *plan.Node, proc *process.Process) *
 				}
 				vec, err := executor.Eval(proc, []*batch.Batch{constBat})
 				if err != nil {
+					executor.Free()
 					panic(err)
 				}
 				cfg = []byte(vec.GetStringAt(0))
+				executor.Free()
 			}
 
 			e = f.F.Args[0]
@@ -1140,7 +1157,7 @@ func constructSample(n *plan.Node, outputRowCount bool) *sample.Argument {
 	panic("only support sample by rows / percent now.")
 }
 
-func constructGroup(ctx context.Context, n, cn *plan.Node, ibucket, nbucket int, needEval bool, shuffleDop int, proc *process.Process) *group.Argument {
+func constructGroup(_ context.Context, n, cn *plan.Node, ibucket, nbucket int, needEval bool, shuffleDop int, proc *process.Process) *group.Argument {
 	aggs := make([]agg.Aggregate, len(n.AggList))
 	var cfg []byte
 	for i, expr := range n.AggList {
@@ -1159,9 +1176,11 @@ func constructGroup(ctx context.Context, n, cn *plan.Node, ibucket, nbucket int,
 					}
 					vec, err := executor.Eval(proc, []*batch.Batch{constBat})
 					if err != nil {
+						executor.Free()
 						panic(err)
 					}
 					cfg = []byte(vec.GetStringAt(0))
+					executor.Free()
 				}
 			}
 
@@ -1483,6 +1502,22 @@ func constructPartition(n *plan.Node) *partition.Argument {
 	return arg
 }
 
+func constructIndexJoin(n *plan.Node, typs []types.Type, proc *process.Process) *indexjoin.Argument {
+	result := make([]int32, len(n.ProjectList))
+	for i, expr := range n.ProjectList {
+		rel, pos := constructJoinResult(expr, proc)
+		if rel != 0 {
+			panic(moerr.NewNYI(proc.Ctx, "loop semi result '%s'", expr))
+		}
+		result[i] = pos
+	}
+	arg := indexjoin.NewArgument()
+	arg.Typs = typs
+	arg.Result = result
+	arg.RuntimeFilterSpecs = n.RuntimeFilterBuildList
+	return arg
+}
+
 func constructLoopJoin(n *plan.Node, typs []types.Type, proc *process.Process) *loopjoin.Argument {
 	result := make([]colexec.ResultPos, len(n.ProjectList))
 	for i, expr := range n.ProjectList {
@@ -1570,36 +1605,28 @@ func constructLoopMark(n *plan.Node, typs []types.Type, proc *process.Process) *
 	return arg
 }
 
-func registerRuntimeFilters[T runtimeFilterSenderSetter](arg T, c *Compile, specs []*plan.RuntimeFilterSpec, shuffleCnt int) {
-	if specs == nil {
-		return
-	}
-
-	RuntimeFilterSenders := make([]*colexec.RuntimeFilterChan, 0, len(specs))
-	for _, rfSpec := range specs {
-		c.lock.Lock()
-		receiver, ok := c.runtimeFilterReceiverMap[rfSpec.Tag]
-		if !ok {
-			if shuffleCnt == 0 {
-				shuffleCnt = 1
-			}
-			receiver = &runtimeFilterReceiver{
-				size: shuffleCnt,
-				ch:   make(chan *pipeline.RuntimeFilter),
-			}
-			c.runtimeFilterReceiverMap[rfSpec.Tag] = receiver
+func constructJoinBuildInstruction(c *Compile, in vm.Instruction, shuffleCnt int, isDup bool) vm.Instruction {
+	switch in.Op {
+	case vm.IndexJoin:
+		arg := in.Arg.(*indexjoin.Argument)
+		ret := indexbuild.NewArgument()
+		if len(arg.RuntimeFilterSpecs) > 0 {
+			ret.RuntimeFilterSpec = arg.RuntimeFilterSpecs[0]
 		}
-		c.lock.Unlock()
-
-		RuntimeFilterSenders = append(RuntimeFilterSenders, &colexec.RuntimeFilterChan{
-			Spec: rfSpec,
-			Chan: receiver.ch,
-		})
+		return vm.Instruction{
+			Op:      vm.IndexBuild,
+			Idx:     in.Idx,
+			IsFirst: true,
+			Arg:     ret,
+		}
+	default:
+		return vm.Instruction{
+			Op:      vm.HashBuild,
+			Idx:     in.Idx,
+			IsFirst: true,
+			Arg:     constructHashBuild(c, in, c.proc, shuffleCnt, isDup),
+		}
 	}
-
-	// Set the runtime filters for the concrete type
-	arg.SetRuntimeFilterSenders(RuntimeFilterSenders)
-
 }
 
 func constructHashBuild(c *Compile, in vm.Instruction, proc *process.Process, shuffleCnt int, isDup bool) *hashbuild.Argument {
@@ -1654,8 +1681,9 @@ func constructHashBuild(c *Compile, in vm.Instruction, proc *process.Process, sh
 		}
 		ret.NeedMergedBatch = needMergedBatch
 		ret.NeedAllocateSels = true
-
-		registerRuntimeFilters(ret, c, arg.RuntimeFilterSpecs, shuffleCnt)
+		if len(arg.RuntimeFilterSpecs) > 0 {
+			ret.RuntimeFilterSpec = arg.RuntimeFilterSpecs[0]
+		}
 
 	case vm.Left:
 		arg := in.Arg.(*left.Argument)
@@ -1666,8 +1694,9 @@ func constructHashBuild(c *Compile, in vm.Instruction, proc *process.Process, sh
 		ret.NeedMergedBatch = true
 		ret.HashOnPK = arg.HashOnPK
 		ret.NeedAllocateSels = true
-
-		registerRuntimeFilters(ret, c, arg.RuntimeFilterSpecs, shuffleCnt)
+		if len(arg.RuntimeFilterSpecs) > 0 {
+			ret.RuntimeFilterSpec = arg.RuntimeFilterSpecs[0]
+		}
 
 	case vm.Right:
 		arg := in.Arg.(*right.Argument)
@@ -1680,8 +1709,9 @@ func constructHashBuild(c *Compile, in vm.Instruction, proc *process.Process, sh
 		ret.NeedMergedBatch = true
 		ret.HashOnPK = arg.HashOnPK
 		ret.NeedAllocateSels = true
-
-		registerRuntimeFilters(ret, c, arg.RuntimeFilterSpecs, shuffleCnt)
+		if len(arg.RuntimeFilterSpecs) > 0 {
+			ret.RuntimeFilterSpec = arg.RuntimeFilterSpecs[0]
+		}
 
 	case vm.RightSemi:
 		arg := in.Arg.(*rightsemi.Argument)
@@ -1694,8 +1724,9 @@ func constructHashBuild(c *Compile, in vm.Instruction, proc *process.Process, sh
 		ret.NeedMergedBatch = true
 		ret.HashOnPK = arg.HashOnPK
 		ret.NeedAllocateSels = true
-
-		registerRuntimeFilters(ret, c, arg.RuntimeFilterSpecs, shuffleCnt)
+		if len(arg.RuntimeFilterSpecs) > 0 {
+			ret.RuntimeFilterSpec = arg.RuntimeFilterSpecs[0]
+		}
 
 	case vm.RightAnti:
 		arg := in.Arg.(*rightanti.Argument)
@@ -1708,8 +1739,9 @@ func constructHashBuild(c *Compile, in vm.Instruction, proc *process.Process, sh
 		ret.NeedMergedBatch = true
 		ret.HashOnPK = arg.HashOnPK
 		ret.NeedAllocateSels = true
-
-		registerRuntimeFilters(ret, c, arg.RuntimeFilterSpecs, shuffleCnt)
+		if len(arg.RuntimeFilterSpecs) > 0 {
+			ret.RuntimeFilterSpec = arg.RuntimeFilterSpecs[0]
+		}
 
 	case vm.Semi:
 		arg := in.Arg.(*semi.Argument)
@@ -1725,8 +1757,9 @@ func constructHashBuild(c *Compile, in vm.Instruction, proc *process.Process, sh
 			ret.NeedMergedBatch = true
 			ret.NeedAllocateSels = true
 		}
-
-		registerRuntimeFilters(ret, c, arg.RuntimeFilterSpecs, shuffleCnt)
+		if len(arg.RuntimeFilterSpecs) > 0 {
+			ret.RuntimeFilterSpec = arg.RuntimeFilterSpecs[0]
+		}
 
 	case vm.Single:
 		arg := in.Arg.(*single.Argument)
@@ -1737,8 +1770,9 @@ func constructHashBuild(c *Compile, in vm.Instruction, proc *process.Process, sh
 		ret.NeedMergedBatch = true
 		ret.HashOnPK = arg.HashOnPK
 		ret.NeedAllocateSels = true
-
-		registerRuntimeFilters(ret, c, arg.RuntimeFilterSpecs, shuffleCnt)
+		if len(arg.RuntimeFilterSpecs) > 0 {
+			ret.RuntimeFilterSpec = arg.RuntimeFilterSpecs[0]
+		}
 
 	case vm.Product:
 		arg := in.Arg.(*product.Argument)

@@ -131,6 +131,9 @@ func statementCanBeExecutedInUncommittedTransaction(ses *Session, stmt tree.Stat
 	switch st := stmt.(type) {
 	//ddl statement
 	case *tree.CreateTable, *tree.CreateIndex, *tree.CreateView, *tree.AlterView, *tree.AlterTable:
+		if createTblStmt, ok := stmt.(*tree.CreateTable); ok && createTblStmt.IsAsSelect {
+			return false, nil
+		}
 		return true, nil
 	case *tree.CreateDatabase, *tree.CreateSequence: //Case1, Case3 above
 		return ses.IsBackgroundSession() || !ses.OptionBitsIsSet(OPTION_BEGIN), nil
@@ -169,6 +172,7 @@ func statementCanBeExecutedInUncommittedTransaction(ses *Session, stmt tree.Stat
 		*tree.ShowSubscriptions,
 		*tree.ShowCreatePublications,
 		*tree.ShowBackendServers,
+		*tree.ShowAccountUpgrade,
 		*tree.ShowConnectors:
 		return true, nil
 		//others
@@ -181,7 +185,7 @@ func statementCanBeExecutedInUncommittedTransaction(ses *Session, stmt tree.Stat
 		if err != nil {
 			return false, err
 		}
-		preStmt, err := mysql.ParseOne(ses.requestCtx, st.Sql, v.(int64))
+		preStmt, err := mysql.ParseOne(ses.requestCtx, st.Sql, v.(int64), 0)
 		defer func() {
 			preStmt.Free()
 		}()
