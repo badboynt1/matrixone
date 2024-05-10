@@ -21,15 +21,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/matrixorigin/matrixone/pkg/container/vector"
 	"github.com/panjf2000/ants/v2"
-
-	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/index"
 
 	"github.com/matrixorigin/matrixone/pkg/catalog"
 	"github.com/matrixorigin/matrixone/pkg/common/mpool"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	"github.com/matrixorigin/matrixone/pkg/container/types"
+	"github.com/matrixorigin/matrixone/pkg/container/vector"
 	"github.com/matrixorigin/matrixone/pkg/fileservice"
 	"github.com/matrixorigin/matrixone/pkg/lockservice"
 	"github.com/matrixorigin/matrixone/pkg/logservice"
@@ -47,6 +45,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/disttae/cache"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/disttae/logtailreplay"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/blockio"
+	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/index"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
 )
 
@@ -65,6 +64,8 @@ const (
 	ALTER
 	INSERT_TXN // Only for CN workspace consumption, not sent to DN
 	DELETE_TXN // Only for CN workspace consumption, not sent to DN
+
+	MERGEOBJECT
 )
 
 var (
@@ -128,11 +129,26 @@ type Engine struct {
 	us       udf.Service
 	cli      client.TxnClient
 	idGen    IDGenerator
-	//TODO::cache multiple snapshot databases and tables.
+	tnID     string
+
+	//latest catalog will be loaded from TN when engine is initialized.
 	catalog *cache.CatalogCache
-	tnID    string
-	//TODO::table maybe contains multiple snapshot partition state.
+	//snapshot catalog will be loaded from TN When snapshot read is needed.
+	snapCatalog *struct {
+		sync.Mutex
+		snaps []*cache.CatalogCache
+	}
+	//latest partitions which be protected by e.Lock().
 	partitions map[[2]uint64]*logtailreplay.Partition
+	//snapshot partitions
+	mu struct {
+		sync.Mutex
+		snapParts map[[2]uint64]*struct {
+			sync.Mutex
+			snaps []*logtailreplay.Partition
+		}
+	}
+
 	packerPool *fileservice.Pool[*types.Packer]
 
 	gcPool *ants.Pool
@@ -183,6 +199,8 @@ type Transaction struct {
 	}
 	// use to cache databases created by current txn.
 	databaseMap *sync.Map
+	// Used to record deleted databases in transactions.
+	deletedDatabaseMap *sync.Map
 	// use to cache tables created by current txn.
 	createMap *sync.Map
 	/*
