@@ -1484,8 +1484,8 @@ func (builder *QueryBuilder) createQuery() (*Query, error) {
 		ReCalcNodeStats(rootID, builder, true, false, true)
 
 		determineHashOnPK(rootID, builder)
-		determineShuffleMethod(rootID, builder)
-		determineShuffleMethod2(rootID, -1, builder)
+		//determineShuffleMethod(rootID, builder)
+		//determineShuffleMethod2(rootID, -1, builder)
 		// after determine shuffle, be careful when calling ReCalcNodeStats again.
 		// needResetHashMapStats should always be false from here
 
