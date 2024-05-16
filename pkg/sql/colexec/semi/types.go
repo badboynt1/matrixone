@@ -69,8 +69,6 @@ type container struct {
 
 type Argument struct {
 	ctr        *container
-	Ibucket    uint64 // index in buckets
-	Nbucket    uint64 // buckets count
 	Result     []int32
 	Typs       []types.Type
 	Cond       *plan.Expr
@@ -125,6 +123,8 @@ func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error)
 
 		anal := proc.GetAnalyze(arg.GetIdx(), arg.GetParallelIdx(), arg.GetParallelMajor())
 		anal.Alloc(ctr.maxAllocSize)
+
+		arg.ctr = nil
 	}
 }
 

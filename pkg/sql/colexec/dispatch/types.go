@@ -128,15 +128,15 @@ func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error)
 			}
 			colexec.Get().DeleteUuids(uuids)
 		}
+
+		arg.ctr = nil
 	}
 
+	// told the local receiver to stop if it is still running.
 	for i := range arg.LocalRegs {
-		if !pipelineFailed {
-			select {
-			case <-arg.LocalRegs[i].Ctx.Done():
-			case arg.LocalRegs[i].Ch <- nil:
-			}
+		select {
+		case <-arg.LocalRegs[i].Ctx.Done():
+		case arg.LocalRegs[i].Ch <- nil:
 		}
-		close(arg.LocalRegs[i].Ch)
 	}
 }

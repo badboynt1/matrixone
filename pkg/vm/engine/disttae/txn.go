@@ -294,10 +294,16 @@ func (txn *Transaction) checkDup() error {
 			continue
 		}
 		if (e.typ == DELETE || e.typ == DELETE_TXN || e.typ == UPDATE) &&
-			e.databaseId == catalog.MO_DATABASE_ID &&
+			e.databaseId == catalog.MO_CATALOG_ID &&
 			e.tableId == catalog.MO_COLUMNS_ID {
 			continue
 		}
+
+		dbkey := genDatabaseKey(e.accountId, e.databaseName)
+		if _, ok := txn.deletedDatabaseMap.Load(dbkey); ok {
+			continue
+		}
+
 		tableKey := genTableKey(e.accountId, e.tableName, e.databaseId)
 		if _, ok := txn.deletedTableMap.Load(tableKey); ok {
 			continue
@@ -974,8 +980,8 @@ func (txn *Transaction) forEachTableWrites(databaseId uint64, tableId uint64, of
 // getCachedTable returns the cached table in this transaction if it exists, nil otherwise.
 // Before it gets the cached table, it checks whether the table is deleted by another
 // transaction by go through the delete tables slice, and advance its cachedIndex.
-// TODO::get snapshot table from cache for snapshot read
 func (txn *Transaction) getCachedTable(
+	ctx context.Context,
 	k tableKey,
 ) *txnTable {
 	var tbl *txnTable
@@ -987,7 +993,19 @@ func (txn *Transaction) getCachedTable(
 			DatabaseId: k.databaseId,
 			Name:       k.name,
 		}
-		val := txn.engine.catalog.GetSchemaVersion(tblKey)
+		var catache *cache.CatalogCache
+		var err error
+		if !txn.op.IsSnapOp() {
+			catache = txn.engine.getLatestCatalogCache()
+		} else {
+			catache, err = txn.engine.getOrCreateSnapCatalogCache(
+				ctx,
+				types.TimestampToTS(txn.op.SnapshotTS()))
+			if err != nil {
+				return nil
+			}
+		}
+		val := catache.GetSchemaVersion(tblKey)
 		if val != nil {
 			if val.Ts.Greater(tbl.lastTS) && val.Version != tbl.version {
 				txn.tableCache.tableMap.Delete(genTableKey(k.accountId, k.name, k.databaseId))
@@ -1052,6 +1070,7 @@ func (txn *Transaction) delTransaction() {
 	txn.tableCache.tableMap = nil
 	txn.createMap = nil
 	txn.databaseMap = nil
+	txn.deletedDatabaseMap = nil
 	txn.deletedTableMap = nil
 	txn.blockId_tn_delete_metaLoc_batch.data = nil
 	txn.deletedBlocks = nil
@@ -1154,9 +1173,10 @@ func (txn *Transaction) CloneSnapshotWS() client.Workspace {
 			cachedIndex int
 			tableMap    *sync.Map
 		}{tableMap: new(sync.Map)},
-		databaseMap:     new(sync.Map),
-		createMap:       new(sync.Map),
-		deletedTableMap: new(sync.Map),
+		databaseMap:        new(sync.Map),
+		deletedDatabaseMap: new(sync.Map),
+		createMap:          new(sync.Map),
+		deletedTableMap:    new(sync.Map),
 		deletedBlocks: &deletedBlocks{
 			offsets: map[types.Blockid][]int64{},
 		},

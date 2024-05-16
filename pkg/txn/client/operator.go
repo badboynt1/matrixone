@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/common/runtime"
 	"github.com/matrixorigin/matrixone/pkg/lockservice"
@@ -35,7 +37,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/txn/rpc"
 	"github.com/matrixorigin/matrixone/pkg/txn/util"
 	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
-	"go.uber.org/zap"
 )
 
 var (
@@ -60,6 +61,7 @@ var (
 		moerr.ErrTxnNotFound:          {},
 		moerr.ErrTxnNotActive:         {},
 		moerr.ErrLockTableBindChanged: {},
+		moerr.ErrCannotCommitOrphan:   {},
 	}
 	rollbackTxnErrors = map[uint16]struct{}{
 		moerr.ErrTAERollback:  {},
@@ -227,6 +229,8 @@ type txnOperator struct {
 	commitCounter   counter
 	rollbackCounter counter
 	runSqlCounter   counter
+
+	waitActiveCost time.Duration
 }
 
 func newTxnOperator(
@@ -319,8 +323,13 @@ func (tc *txnOperator) waitActive(ctx context.Context) error {
 			return tc.waiter.wait(ctx)
 		},
 		false)
+	tc.waitActiveCost = cost
 	v2.TxnWaitActiveDurationHistogram.Observe(cost.Seconds())
 	return err
+}
+
+func (tc *txnOperator) GetWaitActiveCost() time.Duration {
+	return tc.waitActiveCost
 }
 
 func (tc *txnOperator) notifyActive() {
@@ -1128,6 +1137,15 @@ func (tc *txnOperator) RemoveWaitLock(key uint64) {
 	defer tc.mu.Unlock()
 
 	delete(tc.mu.waitLocks, key)
+}
+
+func (tc *txnOperator) LockTableCount() int32 {
+	tc.mu.RLock()
+	defer tc.mu.RUnlock()
+	if tc.mu.txn.Mode != txn.TxnMode_Pessimistic {
+		panic("lock in optimistic mode")
+	}
+	return int32(len(tc.mu.lockTables))
 }
 
 func (tc *txnOperator) GetOverview() TxnOverview {

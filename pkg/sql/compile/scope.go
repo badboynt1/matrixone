@@ -31,7 +31,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/common/runtime"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	"github.com/matrixorigin/matrixone/pkg/defines"
-	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/objectio"
 	pbpipeline "github.com/matrixorigin/matrixone/pkg/pb/pipeline"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
@@ -59,7 +58,9 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/memoryengine"
 	"github.com/matrixorigin/matrixone/pkg/vm/pipeline"
 	"github.com/matrixorigin/matrixone/pkg/vm/process"
+
 	"github.com/panjf2000/ants/v2"
+	_ "go.uber.org/automaxprocs"
 	"go.uber.org/zap"
 )
 
@@ -94,17 +95,41 @@ func (s *Scope) release() {
 	reuse.Free[Scope](s, nil)
 }
 
+func (s *Scope) initDataSource(c *Compile) (err error) {
+	if s.DataSource == nil {
+		return nil
+	}
+	if s.DataSource.isConst {
+		if s.DataSource.Bat != nil {
+			return
+		}
+		bat, err := constructValueScanBatch(s.Proc.Ctx, c.proc, s.DataSource.node)
+		if err != nil {
+			return err
+		}
+		s.DataSource.Bat = bat
+	} else {
+		if s.DataSource.TableDef != nil {
+			return nil
+		}
+		return c.compileTableScanDataSource(s)
+	}
+	return nil
+}
+
 // Run read data from storage engine and run the instructions of scope.
 func (s *Scope) Run(c *Compile) (err error) {
 	var p *pipeline.Pipeline
 	defer func() {
 		if e := recover(); e != nil {
 			err = moerr.ConvertPanicError(s.Proc.Ctx, e)
-			getLogger().Error("panic in scope run",
+			c.proc.Error(c.ctx, "panic in scope run",
 				zap.String("sql", c.sql),
 				zap.String("error", err.Error()))
 		}
-		p.Cleanup(s.Proc, err != nil, err)
+		if p != nil {
+			p.Cleanup(s.Proc, err != nil, err)
+		}
 	}()
 
 	s.Proc.Ctx = context.WithValue(s.Proc.Ctx, defines.EngineKey{}, c.e)
@@ -120,7 +145,7 @@ func (s *Scope) Run(c *Compile) (err error) {
 			id = s.DataSource.TableDef.TblId
 		}
 		p = pipeline.New(id, s.DataSource.Attributes, s.Instructions, s.Reg)
-		if s.DataSource.Bat != nil {
+		if s.DataSource.isConst {
 			_, err = p.ConstRun(s.DataSource.Bat, s.Proc)
 		} else {
 			var tag int32
@@ -149,6 +174,20 @@ func (s *Scope) SetContextRecursively(ctx context.Context) {
 	}
 }
 
+func (s *Scope) InitAllDataSource(c *Compile) error {
+	err := s.initDataSource(c)
+	if err != nil {
+		return err
+	}
+	for _, scope := range s.PreScopes {
+		err := scope.InitAllDataSource(c)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Scope) SetOperatorInfoRecursively(cb func() int32) {
 	for i := 0; i < len(s.Instructions); i++ {
 		s.Instructions[i].CnAddr = s.NodeInfo.Addr
@@ -174,7 +213,7 @@ func (s *Scope) MergeRun(c *Compile) error {
 			defer func() {
 				if e := recover(); e != nil {
 					err := moerr.ConvertPanicError(c.ctx, e)
-					getLogger().Error("panic in merge run run",
+					c.proc.Error(c.ctx, "panic in merge run run",
 						zap.String("sql", c.sql),
 						zap.String("error", err.Error()))
 					errChan <- err
@@ -197,14 +236,15 @@ func (s *Scope) MergeRun(c *Compile) error {
 			wg.Done()
 		}
 	}
-	defer wg.Wait()
 
 	s.Proc.Ctx = context.WithValue(s.Proc.Ctx, defines.EngineKey{}, c.e)
 	var errReceiveChan chan error
 	if len(s.RemoteReceivRegInfos) > 0 {
 		errReceiveChan = make(chan error, len(s.RemoteReceivRegInfos))
-		s.notifyAndReceiveFromRemote(errReceiveChan)
+		s.notifyAndReceiveFromRemote(&wg, errReceiveChan)
 	}
+	defer wg.Wait()
+
 	p := pipeline.NewMerge(s.Instructions, s.Reg)
 	if _, err := p.MergeRun(s.Proc); err != nil {
 		select {
@@ -295,7 +335,10 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 	if len(s.DataSource.RuntimeFilterSpecs) > 0 {
 		for _, spec := range s.DataSource.RuntimeFilterSpecs {
 			msgReceiver := c.proc.NewMessageReceiver([]int32{spec.Tag}, process.AddrBroadCastOnCurrentCN())
-			msgs := msgReceiver.ReceiveMessage(true)
+			msgs, ctxDone := msgReceiver.ReceiveMessage(true, s.Proc.Ctx)
+			if ctxDone {
+				return nil
+			}
 			for i := range msgs {
 				msg, ok := msgs[i].(process.RuntimeFilterMessage)
 				if !ok {
@@ -380,6 +423,7 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 // ParallelRun try to execute the scope in parallel way.
 func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 	var rds []engine.Reader
+	var err error
 
 	s.Proc.Ctx = context.WithValue(s.Proc.Ctx, defines.EngineKey{}, c.e)
 	if s.IsJoin {
@@ -392,13 +436,12 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 		return s.MergeRun(c)
 	}
 
-	var err error
 	err = s.handleRuntimeFilter(c)
 	if err != nil {
 		return err
 	}
 
-	numCpu := goruntime.NumCPU()
+	numCpu := goruntime.GOMAXPROCS(0)
 	var mcpu int
 
 	switch {
@@ -671,16 +714,16 @@ func (s *Scope) LoadRun(c *Compile) error {
 	mcpu := s.NodeInfo.Mcpu
 	ss := make([]*Scope, mcpu)
 	for i := 0; i < mcpu; i++ {
-		bat := batch.NewWithSize(1)
-		{
-			bat.SetRowCount(1)
-		}
 		ss[i] = newScope(Normal)
 		ss[i].NodeInfo = s.NodeInfo
 		ss[i].DataSource = &Source{
-			Bat: bat,
+			isConst: true,
 		}
 		ss[i].Proc = process.NewWithAnalyze(s.Proc, c.ctx, 0, c.anal.Nodes())
+		err := ss[i].initDataSource(c)
+		if err != nil {
+			return err
+		}
 	}
 	newScope, err := newParallelScope(c, s, ss)
 	if err != nil {
@@ -752,7 +795,7 @@ func newParallelScope(c *Compile, s *Scope, ss []*Scope) (*Scope, error) {
 				Op:  vm.MergeLimit,
 				Idx: in.Idx,
 				Arg: mergelimit.NewArgument().
-					WithLimit(arg.Limit),
+					WithLimit(arg.LimitExpr),
 
 				CnAddr:      in.CnAddr,
 				OperatorID:  c.allocOperatorID(),
@@ -765,7 +808,7 @@ func newParallelScope(c *Compile, s *Scope, ss []*Scope) (*Scope, error) {
 					Idx:     in.Idx,
 					IsFirst: in.IsFirst,
 					Arg: limit.NewArgument().
-						WithLimit(arg.Limit),
+						WithLimit(arg.LimitExpr),
 
 					CnAddr:      in.CnAddr,
 					OperatorID:  in.OperatorID,
@@ -778,6 +821,9 @@ func newParallelScope(c *Compile, s *Scope, ss []*Scope) (*Scope, error) {
 			flg = true
 			idx = i
 			arg := in.Arg.(*group.Argument)
+			if arg.AnyDistinctAgg() {
+				continue
+			}
 			s.Instructions = s.Instructions[i:]
 			s.Instructions[0] = vm.Instruction{
 				Op:  vm.MergeGroup,
@@ -796,10 +842,9 @@ func newParallelScope(c *Compile, s *Scope, ss []*Scope) (*Scope, error) {
 					Idx:     in.Idx,
 					IsFirst: in.IsFirst,
 					Arg: group.NewArgument().
-						WithAggs(arg.Aggs).
 						WithExprs(arg.Exprs).
 						WithTypes(arg.Types).
-						WithMultiAggs(arg.MultiAggs),
+						WithAggsNew(arg.Aggs),
 
 					CnAddr:      in.CnAddr,
 					OperatorID:  in.OperatorID,
@@ -865,7 +910,7 @@ func newParallelScope(c *Compile, s *Scope, ss []*Scope) (*Scope, error) {
 				Op:  vm.MergeOffset,
 				Idx: in.Idx,
 				Arg: mergeoffset.NewArgument().
-					WithOffset(arg.Offset),
+					WithOffset(arg.OffsetExpr),
 
 				CnAddr:      in.CnAddr,
 				OperatorID:  c.allocOperatorID(),
@@ -878,7 +923,7 @@ func newParallelScope(c *Compile, s *Scope, ss []*Scope) (*Scope, error) {
 					Idx:     in.Idx,
 					IsFirst: in.IsFirst,
 					Arg: offset.NewArgument().
-						WithOffset(arg.Offset),
+						WithOffset(arg.OffsetExpr),
 
 					CnAddr:      in.CnAddr,
 					OperatorID:  in.OperatorID,
@@ -917,7 +962,7 @@ func newParallelScope(c *Compile, s *Scope, ss []*Scope) (*Scope, error) {
 		// Add log for cn panic which reported on issue 10656
 		// If you find this log is printed, please report the repro details
 		if len(s.Instructions) < 2 {
-			logutil.Error("the length of s.Instructions is too short!"+DebugShowScopes([]*Scope{s}),
+			c.proc.Error(c.proc.Ctx, "the length of s.Instructions is too short!"+DebugShowScopes([]*Scope{s}),
 				zap.String("stack", string(debug.Stack())),
 			)
 			return nil, moerr.NewInternalErrorNoCtx("the length of s.Instructions is too short !")
@@ -976,62 +1021,75 @@ func (s *Scope) appendInstruction(in vm.Instruction) {
 	}
 }
 
-func (s *Scope) notifyAndReceiveFromRemote(errChan chan error) {
+func (s *Scope) notifyAndReceiveFromRemote(wg *sync.WaitGroup, errChan chan error) {
+	// if context has done, it means the user or other part of the pipeline stops this query.
+	closeWithError := func(err error, reg *process.WaitRegister) {
+		if reg != nil {
+			select {
+			case <-s.Proc.Ctx.Done():
+			case reg.Ch <- nil:
+			}
+		}
+
+		select {
+		case <-s.Proc.Ctx.Done():
+			errChan <- nil
+		default:
+			errChan <- err
+		}
+		wg.Done()
+	}
+
+	// start N goroutines to send notifications to remote nodes.
+	// to notify the remote dispatch executor where its remote receivers are.
+	// dispatch operator will use this stream connection to send data back.
+	//
+	// function `cnMessageHandle` at file `scopeRemoteRun.go` will handle the notification.
 	for i := range s.RemoteReceivRegInfos {
+		wg.Add(1)
+
 		op := &s.RemoteReceivRegInfos[i]
+		fromAddr := op.FromAddr
+		receiverIdx := op.Idx
+		uuid := op.Uuid[:]
 
-		go func(info *RemoteReceivRegInfo, reg *process.WaitRegister) {
-			// if context has done, it means other pipeline stop the query normally.
-			closeWithError := func(err error) {
-				if reg != nil {
-					select {
-					case <-s.Proc.Ctx.Done():
-					case reg.Ch <- nil:
-					}
-					close(reg.Ch)
+		errSubmit := ants.Submit(
+			func() {
+				streamSender, errStream := cnclient.GetStreamSender(fromAddr)
+				if errStream != nil {
+					s.Proc.Errorf(s.Proc.Ctx, "Failed to get stream sender txnID=%s, err=%v",
+						s.Proc.TxnOperator.Txn().DebugString(), errStream)
+					closeWithError(errStream, s.Proc.Reg.MergeReceivers[receiverIdx])
+					return
 				}
+				defer streamSender.Close(true)
 
-				select {
-				case <-s.Proc.Ctx.Done():
-					errChan <- nil
-				default:
-					errChan <- err
-				}
-			}
-
-			streamSender, errStream := cnclient.GetStreamSender(info.FromAddr)
-			if errStream != nil {
-				logutil.Errorf("Failed to get stream sender txnID=%s, err=%v",
-					s.Proc.TxnOperator.Txn().DebugString(), errStream)
-				closeWithError(errStream)
-				return
-			}
-			defer streamSender.Close(true)
-
-			message := cnclient.AcquireMessage()
-			{
+				message := cnclient.AcquireMessage()
 				message.Id = streamSender.ID()
 				message.Cmd = pbpipeline.Method_PrepareDoneNotifyMessage
 				message.Sid = pbpipeline.Status_Last
-				message.Uuid = info.Uuid[:]
-			}
-			if errSend := streamSender.Send(s.Proc.Ctx, message); errSend != nil {
-				closeWithError(errSend)
-				return
-			}
+				message.Uuid = uuid
 
-			messagesReceive, errReceive := streamSender.Receive()
-			if errReceive != nil {
-				closeWithError(errReceive)
-				return
-			}
-			var ch chan *batch.Batch
-			if reg != nil {
-				ch = reg.Ch
-			}
-			err := receiveMsgAndForward(s.Proc, messagesReceive, ch)
-			closeWithError(err)
-		}(op, s.Proc.Reg.MergeReceivers[op.Idx])
+				if errSend := streamSender.Send(s.Proc.Ctx, message); errSend != nil {
+					closeWithError(errSend, s.Proc.Reg.MergeReceivers[receiverIdx])
+					return
+				}
+
+				messagesReceive, errReceive := streamSender.Receive()
+				if errReceive != nil {
+					closeWithError(errReceive, s.Proc.Reg.MergeReceivers[receiverIdx])
+					return
+				}
+
+				err := receiveMsgAndForward(s.Proc, messagesReceive, s.Proc.Reg.MergeReceivers[receiverIdx].Ch)
+				closeWithError(err, s.Proc.Reg.MergeReceivers[receiverIdx])
+			},
+		)
+
+		if errSubmit != nil {
+			errChan <- errSubmit
+			wg.Done()
+		}
 	}
 }
 
@@ -1044,8 +1102,8 @@ func receiveMsgAndForward(proc *process.Process, receiveCh chan morpc.Message, f
 	for {
 		select {
 		case <-proc.Ctx.Done():
-			logutil.Warnf("proc ctx done during forward")
 			return nil
+
 		case val, ok = <-receiveCh:
 			if val == nil || !ok {
 				return moerr.NewStreamClosedNoCtx()
@@ -1081,7 +1139,7 @@ func receiveMsgAndForward(proc *process.Process, receiveCh chan morpc.Message, f
 			if m.Checksum != crc32.ChecksumIEEE(dataBuffer) {
 				return moerr.NewInternalError(proc.Ctx, "Packages delivered by morpc is broken")
 			}
-			bat, err := decodeBatch(proc.Mp(), nil, dataBuffer)
+			bat, err := decodeBatch(proc.Mp(), dataBuffer)
 			if err != nil {
 				return err
 			}
@@ -1091,8 +1149,9 @@ func receiveMsgAndForward(proc *process.Process, receiveCh chan morpc.Message, f
 			} else {
 				select {
 				case <-proc.Ctx.Done():
-					logutil.Warnf("proc ctx done during forward")
+					bat.Clean(proc.Mp())
 					return nil
+
 				case forwardCh <- bat:
 				}
 			}

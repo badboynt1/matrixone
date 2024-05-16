@@ -41,8 +41,6 @@ type container struct {
 }
 
 type Argument struct {
-	// Ts is not used
-	Ts       uint64
 	Affected uint64
 	Engine   engine.Engine
 
@@ -104,5 +102,6 @@ func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error)
 		if arg.ctr.checkConflictBat != nil {
 			arg.ctr.checkConflictBat.Clean(proc.GetMPool())
 		}
+		arg.ctr = nil
 	}
 }

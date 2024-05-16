@@ -67,6 +67,8 @@ const (
 
 // Source contains information of a relation which will be used in execution.
 type Source struct {
+	isConst bool
+
 	PushdownId             uint64
 	PushdownAddr           string
 	SchemaName             string
@@ -273,6 +275,7 @@ type Compile struct {
 
 	needLockMeta bool
 	metaTables   map[string]struct{}
+	lockTables   map[uint64]*plan.LockTarget
 	disableRetry bool
 
 	lastAllocID int32

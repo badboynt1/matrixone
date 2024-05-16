@@ -77,6 +77,7 @@ func (arg *Argument) Release() {
 
 func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error) {
 	ctr := arg.ctr
+	proc.FinalizeRuntimeFilter(arg.RuntimeFilterSpec)
 	if ctr != nil {
 		if ctr.batch != nil {
 			proc.PutBatch(ctr.batch)
@@ -87,5 +88,7 @@ func (arg *Argument) Free(proc *process.Process, pipelineFailed bool, err error)
 		} else {
 			ctr.FreeAllReg()
 		}
+
+		arg.ctr = nil
 	}
 }
