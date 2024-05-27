@@ -1,4 +1,4 @@
-// Copyright 2022 Matrix Origin
+// Copyright 2024 Matrix Origin
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,27 +14,33 @@
 
 package malloc
 
-import "unsafe"
+import (
+	"math"
+	"testing"
+	"unsafe"
+)
 
-type Handle struct {
-	ptr   unsafe.Pointer
-	class int
-}
+func testAllocator(
+	t *testing.T,
+	newAllocator func() Allocator,
+) {
+	t.Helper()
 
-var dumbHandle = &Handle{
-	class: -1,
-}
+	t.Run("allocate", func(t *testing.T) {
+		allocator := newAllocator()
+		for i := uint64(1); i < 128*MB; i = uint64(math.Ceil(float64(i) * 1.1)) {
+			ptr, dec := allocator.Allocate(i)
+			slice := unsafe.Slice((*byte)(ptr), i)
+			for _, i := range slice {
+				if i != 0 {
+					t.Fatal("not zeroed")
+				}
+			}
+			for i := range slice {
+				slice[i] = byte(i)
+			}
+			dec.Deallocate(ptr)
+		}
+	})
 
-func (h *Handle) Free() {
-	if h.class < 0 {
-		return
-	}
-	pid := runtime_procPin()
-	runtime_procUnpin()
-	shard := pid % numShards
-	select {
-	case shards[shard].pools[h.class].ch <- h:
-		shards[shard].pools[h.class].numFree.Add(1)
-	default:
-	}
 }

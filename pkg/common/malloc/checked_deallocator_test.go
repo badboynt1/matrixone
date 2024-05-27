@@ -1,4 +1,4 @@
-// Copyright 2022 Matrix Origin
+// Copyright 2024 Matrix Origin
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,30 +15,37 @@
 package malloc
 
 import (
+	"fmt"
+	"runtime"
+	"strings"
 	"testing"
-	"unsafe"
 )
 
-func TestAllocFree(t *testing.T) {
-	for i := 0; i < 1<<19; i++ {
-		ptr, handle := Alloc(i, true)
-		bs := unsafe.Slice((*byte)(ptr), i)
-		if len(bs) != i {
-			t.Fatal()
-		}
-		handle.Free()
-	}
+func TestCheckedDeallocator(t *testing.T) {
+	allocator := NewClassAllocator(1)
 
-	// evict
-	stats := make(map[[2]int]int64)
-	evict(stats) // collect infos
-	n := cachingObjects()
-	if n == 0 {
-		t.Fatal()
-	}
-	evict(stats) // flush
-	n = cachingObjects()
-	if n != 0 {
-		t.Fatalf("got %v", n)
-	}
+	func() {
+		defer func() {
+			p := recover()
+			if p == nil {
+				t.Fatal("should panic")
+			}
+			msg := fmt.Sprintf("%v", p)
+			if !strings.Contains(msg, "double free") {
+				t.Fatalf("got %v", msg)
+			}
+		}()
+		ptr, dec := allocator.Allocate(42)
+		dec.Deallocate(ptr)
+		dec.Deallocate(ptr)
+	}()
+
+	func() {
+		ptr, dec := allocator.Allocate(42)
+		_ = ptr
+		_ = dec
+		dec.Deallocate(ptr) // comment out this line to trigger memory leak panic
+	}()
+	runtime.GC()
+
 }

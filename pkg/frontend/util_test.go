@@ -635,6 +635,7 @@ func TestGetExprValue(t *testing.T) {
 		txnOperator.EXPECT().EnterRunSql().Return().AnyTimes()
 		txnOperator.EXPECT().ExitRunSql().Return().AnyTimes()
 		txnOperator.EXPECT().GetWaitActiveCost().Return(time.Duration(0)).AnyTimes()
+		txnOperator.EXPECT().SetFootPrints(gomock.Any()).Return().AnyTimes()
 		txnClient := mock_frontend.NewMockTxnClient(ctrl)
 		txnClient.EXPECT().New(gomock.Any(), gomock.Any(), gomock.Any()).Return(txnOperator, nil).AnyTimes()
 
@@ -745,6 +746,7 @@ func TestGetExprValue(t *testing.T) {
 		txnOperator.EXPECT().EnterRunSql().Return().AnyTimes()
 		txnOperator.EXPECT().ExitRunSql().Return().AnyTimes()
 		txnOperator.EXPECT().GetWaitActiveCost().Return(time.Duration(0)).AnyTimes()
+		txnOperator.EXPECT().SetFootPrints(gomock.Any()).Return().AnyTimes()
 		txnClient := mock_frontend.NewMockTxnClient(ctrl)
 		txnClient.EXPECT().New(gomock.Any(), gomock.Any(), gomock.Any()).Return(txnOperator, nil).AnyTimes()
 
@@ -1159,8 +1161,8 @@ func TestTopsort(t *testing.T) {
 		g.addEdge("3", "4")
 		g.addEdge("3", "5")
 
-		ans, ok := g.sort()
-		cvey.So(ok, cvey.ShouldBeTrue)
+		ans, err := g.sort()
+		cvey.So(err, cvey.ShouldBeNil)
 
 		sort.StringSlice(ans[:2]).Sort()
 		cvey.So(ans[:2], cvey.ShouldResemble, []string{"0", "1"})
@@ -1177,8 +1179,8 @@ func TestTopsort(t *testing.T) {
 		g.addVertex("2")
 
 		// can be in any order
-		_, ok := g.sort()
-		cvey.So(ok, cvey.ShouldBeTrue)
+		_, err := g.sort()
+		cvey.So(err, cvey.ShouldBeNil)
 	})
 
 	cvey.Convey("create graph", t, func() {
@@ -1191,7 +1193,7 @@ func TestTopsort(t *testing.T) {
 		g.addEdge("2", "0")
 
 		// has a cycle
-		_, ok := g.sort()
-		cvey.So(ok, cvey.ShouldBeFalse)
+		_, err := g.sort()
+		cvey.So(err, cvey.ShouldNotBeNil)
 	})
 }

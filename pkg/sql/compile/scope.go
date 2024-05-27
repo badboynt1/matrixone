@@ -29,7 +29,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/common/morpc"
 	"github.com/matrixorigin/matrixone/pkg/common/reuse"
 	"github.com/matrixorigin/matrixone/pkg/common/runtime"
-	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	"github.com/matrixorigin/matrixone/pkg/defines"
 	"github.com/matrixorigin/matrixone/pkg/objectio"
 	pbpipeline "github.com/matrixorigin/matrixone/pkg/pb/pipeline"
@@ -37,6 +36,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/pb/timestamp"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/connector"
+	"github.com/matrixorigin/matrixone/pkg/sql/colexec/filter"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/group"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/limit"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/merge"
@@ -45,7 +45,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/mergeoffset"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/mergetop"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/offset"
-	"github.com/matrixorigin/matrixone/pkg/sql/colexec/restrict"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/right"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/rightanti"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/rightsemi"
@@ -386,7 +385,7 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 		if !isFilterOnPK {
 			// put expr in filter instruction
 			ins := s.Instructions[0]
-			arg, ok := ins.Arg.(*restrict.Argument)
+			arg, ok := ins.Arg.(*filter.Argument)
 			if !ok {
 				panic("missing instruction for runtime filter!")
 			}
@@ -399,19 +398,32 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 	}
 
 	if s.NodeInfo.NeedExpandRanges {
-		if s.DataSource.node == nil {
+		isPartitionTable := false
+
+		scanNode := s.DataSource.node
+		if scanNode == nil {
 			panic("can not expand ranges on remote pipeline!")
 		}
+
+		if scanNode.TableDef.Partition != nil {
+			isPartitionTable = true
+		}
+
 		newExprList := plan2.DeepCopyExprList(inExprList)
 		if len(s.DataSource.node.BlockFilterList) > 0 {
 			newExprList = append(newExprList, s.DataSource.node.BlockFilterList...)
 		}
+
 		ranges, err := c.expandRanges(s.DataSource.node, s.NodeInfo.Rel, newExprList)
 		if err != nil {
 			return err
 		}
 		s.NodeInfo.Data = append(s.NodeInfo.Data, ranges.GetAllBytes()...)
 		s.NodeInfo.NeedExpandRanges = false
+
+		if isPartitionTable {
+			s.NodeInfo.Rel = nil
+		}
 	} else if len(inExprList) > 0 {
 		s.NodeInfo.Data, err = ApplyRuntimeFilters(c.ctx, s.Proc, s.DataSource.TableDef, s.NodeInfo.Data, exprs, filters)
 		if err != nil {
@@ -491,15 +503,23 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 	default:
 		var db engine.Database
 		var rel engine.Relation
+		n := s.DataSource.node
 
 		ctx := c.ctx
 		if util.TableIsClusterTable(s.DataSource.TableDef.GetTableType()) {
 			ctx = defines.AttachAccountId(ctx, catalog.System_Account)
 		}
+
 		txnOp := s.Proc.TxnOperator
-		if !s.DataSource.Timestamp.Equal(timestamp.Timestamp{LogicalTime: 0, PhysicalTime: 0}) &&
-			s.DataSource.Timestamp.Less(s.Proc.TxnOperator.Txn().SnapshotTS) {
-			txnOp = s.Proc.TxnOperator.CloneSnapshotOp(s.DataSource.Timestamp)
+		if n.ScanSnapshot != nil && n.ScanSnapshot.TS != nil {
+			if !n.ScanSnapshot.TS.Equal(timestamp.Timestamp{LogicalTime: 0, PhysicalTime: 0}) &&
+				n.ScanSnapshot.TS.Less(c.proc.TxnOperator.Txn().SnapshotTS) {
+				txnOp = c.proc.TxnOperator.CloneSnapshotOp(*n.ScanSnapshot.TS)
+
+				if n.ScanSnapshot.Tenant != nil {
+					ctx = context.WithValue(ctx, defines.TenantIDKey{}, n.ScanSnapshot.Tenant.TenantID)
+				}
+			}
 		}
 		db, err = c.e.Database(ctx, s.DataSource.SchemaName, txnOp)
 		if err != nil {
@@ -579,11 +599,11 @@ func (s *Scope) ParallelRun(c *Compile, remote bool) error {
 			}
 			// create readers for reading dirty blocks from partition table.
 			for num, relName := range s.DataSource.PartitionRelationNames {
-				subrel, err := db.Relation(c.ctx, relName, c.proc)
+				subrel, err := db.Relation(ctx, relName, c.proc)
 				if err != nil {
 					return err
 				}
-				memRds, err := subrel.NewReader(c.ctx, mcpu, s.DataSource.FilterExpr, dirtyRanges[num], len(s.DataSource.OrderBy) > 0)
+				memRds, err := subrel.NewReader(ctx, mcpu, s.DataSource.FilterExpr, dirtyRanges[num], len(s.DataSource.OrderBy) > 0)
 				if err != nil {
 					return err
 				}
@@ -659,7 +679,7 @@ func (s *Scope) JoinRun(c *Compile) error {
 		ss[i] = newScope(Merge)
 		ss[i].NodeInfo = s.NodeInfo
 		ss[i].Proc = process.NewWithAnalyze(s.Proc, s.Proc.Ctx, 2, c.anal.Nodes())
-		ss[i].Proc.Reg.MergeReceivers[1].Ch = make(chan *batch.Batch, 10)
+		ss[i].Proc.Reg.MergeReceivers[1].Ch = make(chan *process.RegisterMessage, 10)
 	}
 	probe_scope, build_scope := c.newJoinProbeScope(s, ss), c.newJoinBuildScope(s, ss)
 	var err error
@@ -998,7 +1018,7 @@ func newParallelScope(c *Compile, s *Scope, ss []*Scope) (*Scope, error) {
 		for i := 0; i < cnt; i++ {
 			s.Proc.Reg.MergeReceivers[i] = &process.WaitRegister{
 				Ctx: s.Proc.Ctx,
-				Ch:  make(chan *batch.Batch, 1),
+				Ch:  make(chan *process.RegisterMessage, 1),
 			}
 		}
 	}
@@ -1068,7 +1088,7 @@ func (s *Scope) notifyAndReceiveFromRemote(wg *sync.WaitGroup, errChan chan erro
 					closeWithError(errStream, s.Proc.Reg.MergeReceivers[receiverIdx])
 					return
 				}
-				defer streamSender.Close(true)
+				defer streamSender.Close(false)
 
 				message := cnclient.AcquireMessage()
 				message.Id = streamSender.ID()
@@ -1099,7 +1119,7 @@ func (s *Scope) notifyAndReceiveFromRemote(wg *sync.WaitGroup, errChan chan erro
 	}
 }
 
-func receiveMsgAndForward(proc *process.Process, receiveCh chan morpc.Message, forwardCh chan *batch.Batch) error {
+func receiveMsgAndForward(proc *process.Process, receiveCh chan morpc.Message, forwardCh chan *process.RegisterMessage) error {
 	var val morpc.Message
 	var dataBuffer []byte
 	var ok bool
@@ -1153,12 +1173,13 @@ func receiveMsgAndForward(proc *process.Process, receiveCh chan morpc.Message, f
 				// used for delete
 				proc.SetInputBatch(bat)
 			} else {
+				msg := &process.RegisterMessage{Batch: bat}
 				select {
 				case <-proc.Ctx.Done():
 					bat.Clean(proc.Mp())
 					return nil
 
-				case forwardCh <- bat:
+				case forwardCh <- msg:
 				}
 			}
 			dataBuffer = nil

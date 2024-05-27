@@ -73,12 +73,11 @@ type CNClient struct {
 func (c *CNClient) NewStream(backend string) (morpc.Stream, error) {
 	c.Lock()
 	defer c.Unlock()
-
 	if !c.ready {
 		return nil, moerr.NewInternalErrorNoCtx("cn client is not ready")
 	}
 
-	return c.client.NewStream(backend, true)
+	return c.client.NewStream(backend, false)
 }
 
 func (c *CNClient) Close() error {
@@ -93,7 +92,7 @@ func (c *CNClient) Close() error {
 }
 
 const (
-	dfMaxSenderNumber       = 100000
+	dfMaxSenderNumber       = 10
 	dfConnectTimeout        = 5 * time.Second
 	dfClientReadBufferSize  = 1 << 10
 	dfClientWriteBufferSize = 1 << 10
