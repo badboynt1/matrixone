@@ -355,8 +355,7 @@ func (c *Compile) run(s *Scope) error {
 		return nil
 	}
 
-	logutil.Infof("pipeline in run()")
-	logutil.Infof(DebugShowScopes([]*Scope{s}))
+	fmt.Println(DebugShowScopes([]*Scope{s}))
 
 	switch s.Magic {
 	case Normal:
