@@ -60,13 +60,7 @@ func (arg *Argument) Call(proc *process.Process) (vm.CallResult, error) {
 			if err := ctr.build(proc, anal); err != nil {
 				return result, err
 			}
-			if ctr.bat == nil {
-				// for inner ,right and semi join, if hashmap is empty, we can finish this pipeline
-				ctr.state = End
-			} else {
-				ctr.state = Probe
-			}
-
+			ctr.state = Probe
 		case Probe:
 			if ctr.inBat != nil {
 				err = ctr.probe(arg, proc, anal, arg.GetIsLast(), &result)

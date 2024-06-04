@@ -59,13 +59,7 @@ func (arg *Argument) Call(proc *process.Process) (vm.CallResult, error) {
 			if err := ctr.build(proc, anal); err != nil {
 				return result, err
 			}
-			if ctr.bat == nil {
-				// for inner ,right and semi join, if hashmap is empty, we can finish this pipeline
-				ctr.state = End
-			} else {
-				ctr.state = Probe
-			}
-
+			ctr.state = Probe
 		case Probe:
 			if arg.bat == nil {
 				msg := ctr.ReceiveFromSingleReg(0, anal)
