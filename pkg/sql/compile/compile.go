@@ -3336,6 +3336,9 @@ func (c *Compile) newDeleteMergeScope(arg *deletion.Argument, ss []*Scope) *Scop
 }
 
 func (c *Compile) newMergeScope(ss []*Scope) *Scope {
+	if c.execType == plan2.ExecTypeTP {
+		return ss[0]
+	}
 	rs := newScope(Merge)
 	rs.NodeInfo = getEngineNode(c)
 	rs.PreScopes = ss
