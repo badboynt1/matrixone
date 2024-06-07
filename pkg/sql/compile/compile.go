@@ -3682,7 +3682,7 @@ func (c *Compile) newJoinBuildScope(s *Scope, ss []*Scope) *Scope {
 		IsFirst: c.anal.isFirst,
 		Arg:     merge.NewArgument(),
 	})
-	rs.appendInstruction(constructJoinBuildInstruction(c, s.Instructions[0], ss != nil, s.ShuffleCnt > 0))
+	rs.appendInstruction(constructJoinBuildInstruction(c, s.Instructions[0], false, s.ShuffleCnt > 0))
 
 	if ss == nil { // unparallel, send the hashtable to join scope directly
 		s.Proc.Reg.MergeReceivers[s.BuildIdx] = &process.WaitRegister{
