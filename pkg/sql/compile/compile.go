@@ -4367,6 +4367,9 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, []any, []types.T, e
 	if isLaunchMode(c.cnList) || len(n.OrderBy) > 0 || ranges.Len() < plan2.BlockNumForceOneCN || n.Stats.ForceOneCN {
 		return putBlocksInCurrentCN(c, ranges.GetAllBytes(), rel, n), partialResults, partialResultTypes, nil
 	}
+
+	logutil.Infof("query on %v CNs, sql: %v", len(c.cnList), c.sql)
+
 	// disttae engine
 	if engineType == engine.Disttae {
 		nodes, err := shuffleBlocksToMultiCN(c, ranges.(*objectio.BlockInfoSlice), rel, n)
