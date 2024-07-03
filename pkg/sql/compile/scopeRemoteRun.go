@@ -319,6 +319,9 @@ func (s *Scope) remoteRun(c *Compile) (err error) {
 		}
 	}()
 
+	fmt.Print("!!!remote run sql: " + c.sql)
+	fmt.Println(DebugShowScopes([]*Scope{s}))
+
 	// encode the scope but without the last operator.
 	// the last operator will be executed on the current node for receiving the result and send them to the next pipeline.
 	lastIdx := len(s.Instructions) - 1
