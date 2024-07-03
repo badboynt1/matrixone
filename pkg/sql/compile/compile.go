@@ -2607,19 +2607,21 @@ func (c *Compile) compileShuffleJoin(node, left, right *plan.Node, lefts, rights
 	}
 
 	parent, children := c.newShuffleJoinScopeList(lefts, rights, node)
-	lastOperator := make([]vm.Instruction, 0, len(children))
-	for i := range children {
-		ilen := len(children[i].Instructions) - 1
-		lastOperator = append(lastOperator, children[i].Instructions[ilen])
-		children[i].Instructions = children[i].Instructions[:ilen]
-	}
-
-	defer func() {
-		// recovery the children's last operator
+	if parent != nil {
+		lastOperator := make([]vm.Instruction, 0, len(children))
 		for i := range children {
-			children[i].appendInstruction(lastOperator[i])
+			ilen := len(children[i].Instructions) - 1
+			lastOperator = append(lastOperator, children[i].Instructions[ilen])
+			children[i].Instructions = children[i].Instructions[:ilen]
 		}
-	}()
+
+		defer func() {
+			// recovery the children's last operator
+			for i := range children {
+				children[i].appendInstruction(lastOperator[i])
+			}
+		}()
+	}
 
 	switch node.JoinType {
 	case plan.Node_INNER:
@@ -2690,7 +2692,10 @@ func (c *Compile) compileShuffleJoin(node, left, right *plan.Node, lefts, rights
 		panic(moerr.NewNYI(c.proc.Ctx, fmt.Sprintf("shuffle join do not support join type '%v'", node.JoinType)))
 	}
 
-	return parent
+	if parent != nil {
+		return parent
+	}
+	return children
 }
 
 func (c *Compile) compileBroadcastJoin(node, left, right *plan.Node, probeScopes, buildScopes []*Scope) []*Scope {
@@ -3737,10 +3742,12 @@ func (c *Compile) newBroadcastJoinScopeList(probeScopes []*Scope, buildScopes []
 }
 
 func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) ([]*Scope, []*Scope) {
-	if len(c.cnList) <= 1 {
+	single := len(c.cnList) <= 1
+	if single {
 		n.Stats.HashmapStats.ShuffleTypeForMultiCN = plan.ShuffleTypeForMultiCN_Simple
 	}
-	parent := make([]*Scope, 0, len(c.cnList))
+
+	var parent []*Scope
 	children := make([]*Scope, 0, len(c.cnList))
 	lnum := len(left)
 	sum := lnum + len(right)
@@ -3760,7 +3767,9 @@ func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) ([
 			}
 		}
 		children = append(children, ss...)
-		parent = append(parent, c.newMergeRemoteScope(ss, n))
+		if !single {
+			parent = append(parent, c.newMergeRemoteScope(ss, n))
+		}
 	}
 
 	currentFirstFlag := c.anal.isFirst
@@ -3914,14 +3923,14 @@ func regTransplant(source, target *Scope, sourceIdx, targetIdx int) {
 }
 
 func (c *Compile) generateCPUNumber(cpunum, blocks int) int {
-	if cpunum <= 0 || blocks <= 16 || c.IsTpQuery() {
+	if cpunum <= 0 || blocks <= 0 || c.IsTpQuery() {
 		return 1
 	}
-	ret := blocks/16 + 1
-	if ret < cpunum {
-		return ret
+
+	if cpunum <= blocks {
+		return cpunum
 	}
-	return cpunum
+	return blocks
 }
 
 func (c *Compile) initAnalyze(qry *plan.Query) {
