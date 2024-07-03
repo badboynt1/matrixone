@@ -20,6 +20,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	metric "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
 )
 
 var defaultAllocator Allocator
@@ -33,18 +35,22 @@ func GetDefault(defaultConfig *Config) Allocator {
 	return defaultAllocator
 }
 
-func newDefault(config *Config) (allocator Allocator) {
-	if config == nil {
-		c := *defaultConfig.Load()
-		config = &c
+func newDefault(delta *Config) (allocator Allocator) {
+
+	// config
+	config := *defaultConfig.Load()
+	if delta != nil {
+		config = patchConfig(config, *delta)
 	}
 
+	// debug
 	if os.Getenv("MO_MALLOC_DEBUG") != "" {
 		config.CheckFraction = ptrTo(uint32(1))
 		config.FullStackFraction = ptrTo(uint32(1))
 		config.EnableMetrics = ptrTo(true)
 	}
 
+	// profile
 	defer func() {
 		if config.FullStackFraction != nil && *config.FullStackFraction > 0 {
 			allocator = NewProfileAllocator(
@@ -55,41 +61,72 @@ func newDefault(config *Config) (allocator Allocator) {
 		}
 	}()
 
-	switch strings.TrimSpace(strings.ToLower(os.Getenv("MO_MALLOC"))) {
+	// checked
+	defer func() {
+		if config.CheckFraction != nil && *config.CheckFraction > 0 {
+			allocator = NewCheckedAllocator(
+				allocator,
+				*config.CheckFraction,
+			)
+		}
+	}()
+
+	if config.Allocator == nil {
+		config.Allocator = ptrTo("mmap")
+	}
+
+	switch strings.ToLower(*config.Allocator) {
 
 	case "c":
+		// c allocator
 		allocator = NewCAllocator()
 		if config.EnableMetrics != nil && *config.EnableMetrics {
-			allocator = NewMetricsAllocator(allocator)
+			allocator = NewMetricsAllocator(
+				allocator,
+				metric.MallocCounterAllocateBytes,
+				metric.MallocGaugeInuseBytes,
+			)
 		}
 		return allocator
 
-	case "old":
+	case "go":
+		// go allocator
 		return NewShardedAllocator(
 			runtime.GOMAXPROCS(0),
 			func() Allocator {
 				var ret Allocator
-				ret = NewPureGoClassAllocator(256 * MB)
+				ret = NewClassAllocator(NewFixedSizeSyncPoolAllocator)
 				if config.EnableMetrics != nil && *config.EnableMetrics {
-					ret = NewMetricsAllocator(ret)
+					ret = NewMetricsAllocator(
+						ret,
+						metric.MallocCounterAllocateBytes,
+						metric.MallocGaugeInuseBytes,
+					)
+				}
+				return ret
+			},
+		)
+
+	case "mmap":
+		// mmap allocator
+		return NewShardedAllocator(
+			runtime.GOMAXPROCS(0),
+			func() Allocator {
+				var ret Allocator
+				ret = NewClassAllocator(NewFixedSizeMmapAllocator)
+				if config.EnableMetrics != nil && *config.EnableMetrics {
+					ret = NewMetricsAllocator(
+						ret,
+						metric.MallocCounterAllocateBytes,
+						metric.MallocGaugeInuseBytes,
+					)
 				}
 				return ret
 			},
 		)
 
 	default:
-		return NewShardedAllocator(
-			runtime.GOMAXPROCS(0),
-			func() Allocator {
-				var ret Allocator
-				ret = NewClassAllocator(config.CheckFraction)
-				if config.EnableMetrics != nil && *config.EnableMetrics {
-					ret = NewMetricsAllocator(ret)
-				}
-				return ret
-			},
-		)
-
+		panic("unknown allocator: " + *config.Allocator)
 	}
 }
 

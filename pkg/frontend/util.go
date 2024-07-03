@@ -269,7 +269,7 @@ func getExprValue(e tree.Expr, ses *Session, execCtx *ExecCtx) (interface{}, err
 	switch v := e.(type) {
 	case *tree.UnresolvedName:
 		// set @a = on, type of a is bool.
-		return v.Parts[0], nil
+		return v.ColName(), nil
 	}
 
 	var err error
@@ -363,7 +363,7 @@ func GetSimpleExprValue(ctx context.Context, e tree.Expr, ses *Session) (interfa
 	switch v := e.(type) {
 	case *tree.UnresolvedName:
 		// set @a = on, type of a is bool.
-		return v.Parts[0], nil
+		return v.ColName(), nil
 	default:
 		builder := plan2.NewQueryBuilder(plan.Query_SELECT, ses.GetTxnCompileCtx(), false, false)
 		bindContext := plan2.NewBindContext(builder, nil)
@@ -504,9 +504,14 @@ func logStatementStringStatus(ctx context.Context, ses FeSession, stmtStr string
 		ses.Debug(ctx, "query trace status", logutil.StatementField(str), logutil.StatusField(status.String()))
 		err = nil // make sure: it is nil for EndStatement
 	} else {
-		txnId := ses.GetStaticTxnId()
-		ses.Error(ctx, "query trace status", logutil.StatementField(str), logutil.StatusField(status.String()), logutil.ErrorField(err),
-			logutil.TxnIdField(hex.EncodeToString(txnId[:])))
+		ses.Error(
+			ctx,
+			"query trace status",
+			logutil.StatementField(str),
+			logutil.StatusField(status.String()),
+			logutil.ErrorField(err),
+			logutil.TxnInfoField(ses.GetStaticTxnInfo()),
+		)
 	}
 
 	// pls make sure: NO ONE use the ses.tStmt after EndStatement
@@ -912,6 +917,19 @@ func convertRowsIntoBatch(pool *mpool.MPool, cols []Column, rows [][]any) (*batc
 			if err != nil {
 				return nil, nil, err
 			}
+		case types.T_enum:
+			vData := make([]types.Enum, cnt)
+			for rowIdx, row := range rows {
+				if row[colIdx] == nil {
+					nsp.Add(uint64(rowIdx))
+					continue
+				}
+				vData[rowIdx] = row[colIdx].(types.Enum)
+			}
+			err := vector.AppendFixedList[types.Enum](bat.Vecs[colIdx], vData, nil, pool)
+			if err != nil {
+				return nil, nil, err
+			}
 		default:
 			return nil, nil, moerr.NewInternalErrorNoCtx("unsupported type %d", typ.Oid)
 		}
@@ -1143,6 +1161,26 @@ func (ui *UserInput) getSqlSourceType(i int) string {
 	return sqlType
 }
 
+const (
+	issue3482SqlPrefix    = "load data local infile '/data/customer/sutpc_001/data_csv"
+	issue3482SqlPrefixLen = len(issue3482SqlPrefix)
+)
+
+// !!!NOTE!!! For debug
+// https://github.com/matrixorigin/MO-Cloud/issues/3482
+// TODO: remove it in the future
+func (ui *UserInput) isIssue3482Sql() bool {
+	if ui == nil {
+		return false
+	}
+	sql := ui.getSql()
+	sqlLen := len(sql)
+	if sqlLen <= issue3482SqlPrefixLen {
+		return false
+	}
+	return strings.HasPrefix(sql, issue3482SqlPrefix)
+}
+
 func unboxExprStr(ctx context.Context, expr tree.Expr) (string, error) {
 	if e, ok := expr.(*tree.NumVal); ok && e.ValType == tree.P_char {
 		return e.OrigString(), nil
@@ -1365,4 +1403,16 @@ func checkMoreResultSet(status uint16, isLastStmt bool) uint16 {
 		status |= SERVER_MORE_RESULTS_EXISTS
 	}
 	return status
+}
+
+func Copy[T any](src []T) []T {
+	if src == nil {
+		return nil
+	}
+	if len(src) == 0 {
+		return []T{}
+	}
+	dst := make([]T, len(src))
+	copy(dst, src)
+	return dst
 }

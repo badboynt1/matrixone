@@ -30,7 +30,7 @@ func setResponse(ses *Session, isLastStmt bool, rspLen uint64) *Response {
 // response the client
 func respClientWhenSuccess(ses *Session,
 	execCtx *ExecCtx) (err error) {
-	if execCtx.skipRespClient {
+	if execCtx.inMigration {
 		return nil
 	}
 	err = execCtx.resper.RespPostMeta(execCtx, nil)
@@ -48,7 +48,7 @@ func respClientWhenSuccess(ses *Session,
 
 func (resper *MysqlResp) respClientWithoutFlush(ses *Session,
 	execCtx *ExecCtx) (err error) {
-	if execCtx.skipRespClient {
+	if execCtx.inMigration {
 		return nil
 	}
 	switch execCtx.stmt.StmtKind().RespType() {
@@ -239,7 +239,7 @@ func (resper *NullResp) RespPostMeta(execCtx *ExecCtx, a any) error {
 	if ses, ok := execCtx.ses.(*Session); ok && execCtx.stmt != nil {
 		switch execCtx.stmt.(type) {
 		case *tree.Select:
-			if len(execCtx.proc.SessionInfo.SeqAddValues) != 0 {
+			if len(execCtx.proc.GetSessionInfo().SeqAddValues) != 0 {
 				ses.AddSeqValues(execCtx.proc)
 			}
 			ses.SetSeqLastValue(execCtx.proc)

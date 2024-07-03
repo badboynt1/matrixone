@@ -78,7 +78,7 @@ func builtInCurrentTimestamp(ivecs []*vector.Vector, result vector.FunctionResul
 	}
 	rs.TempSetType(types.New(types.T_timestamp, 0, scale))
 
-	resultValue := types.UnixNanoToTimestamp(proc.UnixTime)
+	resultValue := types.UnixNanoToTimestamp(proc.GetUnixTime())
 	for i := uint64(0); i < uint64(length); i++ {
 		if err := rs.Append(resultValue, false); err != nil {
 			return err
@@ -154,7 +154,13 @@ func builtInMoShowVisibleBin(parameters []*vector.Vector, result vector.Function
 			if err != nil {
 				return nil, err
 			}
-			return functionUtil.QuickStrToBytes(typ.String()), nil
+			ts := typ.String()
+			// after decimal fix, remove this
+			if typ.Oid.IsDecimal() {
+				ts = "DECIMAL"
+			}
+
+			return functionUtil.QuickStrToBytes(ts), nil
 		}
 	case typWithLen:
 		f = func(s []byte) ([]byte, error) {
@@ -163,7 +169,14 @@ func builtInMoShowVisibleBin(parameters []*vector.Vector, result vector.Function
 			if err != nil {
 				return nil, err
 			}
-			ret := fmt.Sprintf("%s(%d)", typ.String(), typ.Width)
+
+			ts := typ.String()
+			// after decimal fix, remove this
+			if typ.Oid.IsDecimal() {
+				ts = "DECIMAL"
+			}
+
+			ret := fmt.Sprintf("%s(%d)", ts, typ.Width)
 			return functionUtil.QuickStrToBytes(ret), nil
 		}
 	}
@@ -515,7 +528,7 @@ func builtInPurgeLog(parameters []*vector.Vector, result vector.FunctionResultWr
 	p1 := vector.GenerateFunctionStrParameter(parameters[0])
 	p2 := vector.GenerateFunctionFixedTypeParameter[types.Date](parameters[1])
 
-	if proc.SessionInfo.AccountId != sysAccountID {
+	if proc.GetSessionInfo().AccountId != sysAccountID {
 		return moerr.NewNotSupported(proc.Ctx, "only support sys account")
 	}
 
@@ -529,9 +542,9 @@ func builtInPurgeLog(parameters []*vector.Vector, result vector.FunctionResultWr
 		sql := fmt.Sprintf("delete from `%s`.`%s` where `%s` < %q",
 			tbl.Database, tbl.Table, tbl.TimestampColumn.Name, dateStr)
 		opts := executor.Options{}.WithDatabase(tbl.Database).
-			WithTxn(proc.TxnOperator).
-			WithTimeZone(proc.SessionInfo.TimeZone)
-		if proc.TxnOperator != nil {
+			WithTxn(proc.GetTxnOperator()).
+			WithTimeZone(proc.GetSessionInfo().TimeZone)
+		if proc.GetTxnOperator() != nil {
 			opts = opts.WithDisableIncrStatement() // this option always with WithTxn()
 		}
 		res, err := exec.Exec(proc.Ctx, sql, opts)
@@ -545,7 +558,7 @@ func builtInPurgeLog(parameters []*vector.Vector, result vector.FunctionResultWr
 		var result string
 		// Tips: NO Txn guarantee
 		opts := executor.Options{}.WithDatabase(tbl.Database).
-			WithTimeZone(proc.SessionInfo.TimeZone)
+			WithTimeZone(proc.GetSessionInfo().TimeZone)
 		// fixme: hours should > 24 * time.Hour
 		runPruneSql := fmt.Sprintf(`select mo_ctl('dn', 'inspect', 'objprune -t %s.%s -d %s -f')`, tbl.Database, tbl.Table, hours)
 		res, err := exec.Exec(proc.Ctx, runPruneSql, opts)
@@ -621,7 +634,7 @@ func builtInDatabase(_ []*vector.Vector, result vector.FunctionResultWrapper, pr
 	rs := vector.MustFunctionResult[types.Varlena](result)
 
 	for i := uint64(0); i < uint64(length); i++ {
-		db := proc.SessionInfo.GetDatabase()
+		db := proc.GetSessionInfo().GetDatabase()
 		if err := rs.AppendBytes(functionUtil.QuickStrToBytes(db), false); err != nil {
 			return err
 		}
@@ -632,7 +645,7 @@ func builtInDatabase(_ []*vector.Vector, result vector.FunctionResultWrapper, pr
 func builtInCurrentRole(_ []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int, selectList *FunctionSelectList) error {
 	rs := vector.MustFunctionResult[types.Varlena](result)
 	for i := uint64(0); i < uint64(length); i++ {
-		if err := rs.AppendBytes([]byte(proc.SessionInfo.GetRole()), false); err != nil {
+		if err := rs.AppendBytes([]byte(proc.GetSessionInfo().GetRole()), false); err != nil {
 			return err
 		}
 	}
@@ -642,7 +655,7 @@ func builtInCurrentRole(_ []*vector.Vector, result vector.FunctionResultWrapper,
 func builtInCurrentAccountID(_ []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int, selectList *FunctionSelectList) error {
 	rs := vector.MustFunctionResult[uint32](result)
 	for i := uint64(0); i < uint64(length); i++ {
-		if err := rs.Append(proc.SessionInfo.AccountId, false); err != nil {
+		if err := rs.Append(proc.GetSessionInfo().AccountId, false); err != nil {
 			return err
 		}
 	}
@@ -652,7 +665,7 @@ func builtInCurrentAccountID(_ []*vector.Vector, result vector.FunctionResultWra
 func builtInCurrentAccountName(_ []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int, selectList *FunctionSelectList) error {
 	rs := vector.MustFunctionResult[types.Varlena](result)
 	for i := uint64(0); i < uint64(length); i++ {
-		if err := rs.AppendBytes([]byte(proc.SessionInfo.Account), false); err != nil {
+		if err := rs.AppendBytes([]byte(proc.GetSessionInfo().Account), false); err != nil {
 			return err
 		}
 	}
@@ -662,7 +675,7 @@ func builtInCurrentAccountName(_ []*vector.Vector, result vector.FunctionResultW
 func builtInCurrentRoleID(_ []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int, selectList *FunctionSelectList) error {
 	rs := vector.MustFunctionResult[uint32](result)
 	for i := uint64(0); i < uint64(length); i++ {
-		if err := rs.Append(proc.SessionInfo.RoleId, false); err != nil {
+		if err := rs.Append(proc.GetSessionInfo().RoleId, false); err != nil {
 			return err
 		}
 	}
@@ -672,7 +685,7 @@ func builtInCurrentRoleID(_ []*vector.Vector, result vector.FunctionResultWrappe
 func builtInCurrentRoleName(_ []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int, selectList *FunctionSelectList) error {
 	rs := vector.MustFunctionResult[types.Varlena](result)
 	for i := uint64(0); i < uint64(length); i++ {
-		if err := rs.AppendBytes([]byte(proc.SessionInfo.Role), false); err != nil {
+		if err := rs.AppendBytes([]byte(proc.GetSessionInfo().Role), false); err != nil {
 			return err
 		}
 	}
@@ -682,7 +695,7 @@ func builtInCurrentRoleName(_ []*vector.Vector, result vector.FunctionResultWrap
 func builtInCurrentUserID(_ []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int, selectList *FunctionSelectList) error {
 	rs := vector.MustFunctionResult[uint32](result)
 	for i := uint64(0); i < uint64(length); i++ {
-		if err := rs.Append(proc.SessionInfo.UserId, false); err != nil {
+		if err := rs.Append(proc.GetSessionInfo().UserId, false); err != nil {
 			return err
 		}
 	}
@@ -692,7 +705,7 @@ func builtInCurrentUserID(_ []*vector.Vector, result vector.FunctionResultWrappe
 func builtInCurrentUserName(_ []*vector.Vector, result vector.FunctionResultWrapper, proc *process.Process, length int, selectList *FunctionSelectList) error {
 	rs := vector.MustFunctionResult[types.Varlena](result)
 	for i := uint64(0); i < uint64(length); i++ {
-		if err := rs.AppendBytes([]byte(proc.SessionInfo.User), false); err != nil {
+		if err := rs.AppendBytes([]byte(proc.GetSessionInfo().User), false); err != nil {
 			return err
 		}
 	}
@@ -897,7 +910,7 @@ func builtInUnixTimestampVarcharToInt64(parameters []*vector.Vector, result vect
 				return err
 			}
 		} else {
-			val := mustTimestamp(proc.SessionInfo.TimeZone, string(v1)).Unix()
+			val := mustTimestamp(proc.GetSessionInfo().TimeZone, string(v1)).Unix()
 			if val < 0 {
 				if err := rs.Append(0, true); err != nil {
 					return err
@@ -925,7 +938,7 @@ func builtInUnixTimestampVarcharToFloat64(parameters []*vector.Vector, result ve
 				return err
 			}
 		} else {
-			val := mustTimestamp(proc.SessionInfo.TimeZone, string(v1))
+			val := mustTimestamp(proc.GetSessionInfo().TimeZone, string(v1))
 			if err := rs.Append(val.UnixToFloat(), false); err != nil {
 				return err
 			}
@@ -946,7 +959,7 @@ func builtInUnixTimestampVarcharToDecimal128(parameters []*vector.Vector, result
 				return err
 			}
 		} else {
-			val, err := mustTimestamp(proc.SessionInfo.TimeZone, string(v1)).UnixToDecimal128()
+			val, err := mustTimestamp(proc.GetSessionInfo().TimeZone, string(v1)).UnixToDecimal128()
 			if err != nil {
 				return err
 			}

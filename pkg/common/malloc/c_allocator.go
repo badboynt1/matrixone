@@ -22,22 +22,32 @@ import "unsafe"
 import "C"
 
 type CAllocator struct {
+	deallocatorPool *ClosureDeallocatorPool[cDeallocatorArgs]
+}
+
+type cDeallocatorArgs struct {
+	ptr unsafe.Pointer
 }
 
 func NewCAllocator() *CAllocator {
-	return &CAllocator{}
+	return &CAllocator{
+		deallocatorPool: NewClosureDeallocatorPool(
+			func(hints Hints, args *cDeallocatorArgs) {
+				C.free(args.ptr)
+			},
+		),
+	}
 }
 
 var _ Allocator = new(CAllocator)
 
-func (c *CAllocator) Allocate(size uint64) (unsafe.Pointer, Deallocator, error) {
+func (c *CAllocator) Allocate(size uint64, hints Hints) ([]byte, Deallocator, error) {
 	ptr := C.malloc(C.ulong(size))
-	clear(unsafe.Slice((*byte)(ptr), size))
-	return ptr, c, nil
-}
-
-var _ Deallocator = new(CAllocator)
-
-func (c *CAllocator) Deallocate(ptr unsafe.Pointer) {
-	C.free(ptr)
+	if hints&NoClear == 0 {
+		clear(unsafe.Slice((*byte)(ptr), size))
+	}
+	slice := unsafe.Slice((*byte)(ptr), size)
+	return slice, c.deallocatorPool.Get(cDeallocatorArgs{
+		ptr: ptr,
+	}), nil
 }
