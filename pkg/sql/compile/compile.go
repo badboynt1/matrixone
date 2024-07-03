@@ -3244,6 +3244,8 @@ func (c *Compile) compileTPGroup(n *plan.Node, ss []*Scope, ns []*plan.Node) []*
 func (c *Compile) compileMergeGroup(n *plan.Node, ss []*Scope, ns []*plan.Node, hasDistinct bool) []*Scope {
 	currentFirstFlag := c.anal.isFirst
 
+	childNode := ns[n.Children[0]]
+
 	// for less memory usage while merge group,
 	// we do not run the group-operator in parallel once this has a distinct aggregation.
 	// because the parallel need to store all the source data in the memory for merging.
@@ -3267,7 +3269,7 @@ func (c *Compile) compileMergeGroup(n *plan.Node, ss []*Scope, ns []*plan.Node, 
 				Op:      vm.Group,
 				Idx:     c.anal.curr,
 				IsFirst: c.anal.isFirst,
-				Arg:     constructGroup(c.proc.Ctx, n, ns[n.Children[0]], false, 0, c.proc),
+				Arg:     constructGroup(c.proc.Ctx, n, childNode, false, 0, c.proc),
 			})
 
 		rs := c.newMergeScope([]*Scope{mergeToGroup})
@@ -3296,10 +3298,14 @@ func (c *Compile) compileMergeGroup(n *plan.Node, ss []*Scope, ns []*plan.Node, 
 			Op:      vm.Group,
 			Idx:     c.anal.curr,
 			IsFirst: c.anal.isFirst,
-			Arg:     constructGroup(c.proc.Ctx, n, ns[n.Children[0]], false, 0, c.proc),
+			Arg:     constructGroup(c.proc.Ctx, n, childNode, false, 0, c.proc),
 		})
 	}
 	c.anal.isFirst = false
+	if childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
+		// to avoid bugs on remote pipeline
+		ss = c.mergeShuffleJoinScopeList(ss)
+	}
 
 	rs := c.newMergeScope(ss)
 	arg := constructMergeGroup(true)
