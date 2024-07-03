@@ -17,6 +17,9 @@ package compile
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
+	"time"
+
 	"github.com/matrixorigin/matrixone/pkg/cnservice/cnclient"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/common/morpc"
@@ -29,8 +32,6 @@ import (
 	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
 	"github.com/matrixorigin/matrixone/pkg/vm"
 	"go.uber.org/zap"
-	"sync/atomic"
-	"time"
 )
 
 // MaxRpcTime is a default timeout time to rpc context if user never set this deadline.
@@ -54,6 +55,9 @@ func (s *Scope) remoteRun(c *Compile) (sender *messageSenderOnClient, err error)
 				zap.String("error", err.Error()))
 		}
 	}()
+
+	fmt.Print("!!!!!!remote run sql: " + c.sql)
+	fmt.Println(DebugShowScopes([]*Scope{s}))
 
 	// encode structures which need to send.
 	var scopeEncodeData, processEncodeData []byte
