@@ -1218,7 +1218,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 		if err != nil {
 			return nil, err
 		}
-		ss = c.compileSort(n, c.compileProjection(n, ss))
+		ss = c.compileSort(n, ns, c.compileProjection(n, ss))
 		return ss, nil
 	case plan.Node_EXTERNAL_SCAN:
 		if n.ObjRef != nil {
@@ -1229,7 +1229,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 		if err != nil {
 			return nil, err
 		}
-		ss = c.compileSort(n, c.compileProjection(n, c.compileRestrict(node, ss)))
+		ss = c.compileSort(n, ns, c.compileProjection(n, c.compileRestrict(node, ss)))
 		return ss, nil
 	case plan.Node_TABLE_SCAN:
 		c.appendMetaTables(n.ObjRef)
@@ -1239,10 +1239,10 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 		}
 		ss = c.compileProjection(n, c.compileRestrict(n, ss))
 		if n.Offset != nil {
-			ss = c.compileOffset(n, ss)
+			ss = c.compileOffset(n, ns, ss)
 		}
 		if n.Limit != nil {
-			ss = c.compileLimit(n, ss)
+			ss = c.compileLimit(n, ns, ss)
 		}
 		return ss, nil
 	case plan.Node_SOURCE_SCAN:
@@ -1250,7 +1250,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 		if err != nil {
 			return nil, err
 		}
-		ss = c.compileSort(n, c.compileProjection(n, c.compileRestrict(n, ss)))
+		ss = c.compileSort(n, ns, c.compileProjection(n, c.compileRestrict(n, ss)))
 		return ss, nil
 	case plan.Node_FILTER, plan.Node_PROJECT, plan.Node_PRE_DELETE:
 		curr := c.anal.curr
@@ -1260,7 +1260,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 			return nil, err
 		}
 		c.setAnalyzeCurrent(ss, curr)
-		ss = c.compileSort(n, c.compileProjection(n, c.compileRestrict(n, ss)))
+		ss = c.compileSort(n, ns, c.compileProjection(n, c.compileRestrict(n, ss)))
 		return ss, nil
 	case plan.Node_AGG:
 		curr := c.anal.curr
@@ -1276,13 +1276,13 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 		anyDistinctAgg := groupInfo.AnyDistinctAgg()
 
 		if c.IsTpQuery() && ss[0].PartialResults == nil {
-			ss = c.compileSort(n, c.compileProjection(n, c.compileRestrict(n, c.compileTPGroup(n, ss, ns))))
+			ss = c.compileSort(n, ns, c.compileProjection(n, c.compileRestrict(n, c.compileTPGroup(n, ss, ns))))
 			return ss, nil
 		} else if !anyDistinctAgg && n.Stats.HashmapStats != nil && n.Stats.HashmapStats.Shuffle {
-			ss = c.compileSort(n, c.compileShuffleGroup(n, ss, ns))
+			ss = c.compileSort(n, ns, c.compileShuffleGroup(n, ss, ns))
 			return ss, nil
 		} else {
-			ss = c.compileSort(n, c.compileProjection(n, c.compileRestrict(n, c.compileMergeGroup(n, ss, ns, anyDistinctAgg))))
+			ss = c.compileSort(n, ns, c.compileProjection(n, c.compileRestrict(n, c.compileMergeGroup(n, ss, ns, anyDistinctAgg))))
 			return ss, nil
 		}
 	case plan.Node_SAMPLE:
@@ -1294,7 +1294,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 		}
 		c.setAnalyzeCurrent(ss, curr)
 
-		ss = c.compileSort(n, c.compileProjection(n, c.compileRestrict(n, c.compileSample(n, ss))))
+		ss = c.compileSort(n, ns, c.compileProjection(n, c.compileRestrict(n, c.compileSample(n, ss))))
 		return ss, nil
 	case plan.Node_WINDOW:
 		curr := c.anal.curr
@@ -1304,7 +1304,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 			return nil, err
 		}
 		c.setAnalyzeCurrent(ss, curr)
-		ss = c.compileSort(n, c.compileProjection(n, c.compileRestrict(n, c.compileWin(n, ss))))
+		ss = c.compileSort(n, ns, c.compileProjection(n, c.compileRestrict(n, c.compileWin(n, ss))))
 		return ss, nil
 	case plan.Node_TIME_WINDOW:
 		curr := c.anal.curr
@@ -1314,7 +1314,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 			return nil, err
 		}
 		c.setAnalyzeCurrent(ss, curr)
-		ss = c.compileProjection(n, c.compileRestrict(n, c.compileTimeWin(n, c.compileSort(n, ss))))
+		ss = c.compileProjection(n, c.compileRestrict(n, c.compileTimeWin(n, c.compileSort(n, ns, ss))))
 		return ss, nil
 	case plan.Node_FILL:
 		curr := c.anal.curr
@@ -1339,7 +1339,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 			return nil, err
 		}
 		c.setAnalyzeCurrent(right, curr)
-		ss = c.compileSort(n, c.compileJoin(n, ns[n.Children[0]], ns[n.Children[1]], left, right))
+		ss = c.compileSort(n, ns, c.compileJoin(n, ns[n.Children[0]], ns[n.Children[1]], left, right))
 		return ss, nil
 	case plan.Node_SORT:
 		curr := c.anal.curr
@@ -1349,7 +1349,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 			return nil, err
 		}
 		c.setAnalyzeCurrent(ss, curr)
-		ss = c.compileProjection(n, c.compileRestrict(n, c.compileSort(n, ss)))
+		ss = c.compileProjection(n, c.compileRestrict(n, c.compileSort(n, ns, ss)))
 		return ss, nil
 	case plan.Node_PARTITION:
 		curr := c.anal.curr
@@ -1374,7 +1374,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 			return nil, err
 		}
 		c.setAnalyzeCurrent(right, curr)
-		ss = c.compileSort(n, c.compileUnion(n, left, right))
+		ss = c.compileSort(n, ns, c.compileUnion(n, left, right))
 		return ss, nil
 	case plan.Node_MINUS, plan.Node_INTERSECT, plan.Node_INTERSECT_ALL:
 		curr := c.anal.curr
@@ -1389,7 +1389,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 			return nil, err
 		}
 		c.setAnalyzeCurrent(right, curr)
-		ss = c.compileSort(n, c.compileMinusAndIntersect(n, left, right, n.NodeType))
+		ss = c.compileSort(n, ns, c.compileMinusAndIntersect(n, left, right, n.NodeType))
 		return ss, nil
 	case plan.Node_UNION_ALL:
 		curr := c.anal.curr
@@ -1405,7 +1405,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 			return nil, err
 		}
 		c.setAnalyzeCurrent(right, curr)
-		ss = c.compileSort(n, c.compileUnionAll(left, right))
+		ss = c.compileSort(n, ns, c.compileUnionAll(left, right))
 		return ss, nil
 	case plan.Node_DELETE:
 		if n.DeleteCtx.CanTruncate {
@@ -1749,7 +1749,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 			return nil, err
 		}
 		c.setAnalyzeCurrent(ss, curr)
-		ss = c.compileSort(n, c.compileProjection(n, c.compileRestrict(n, c.compileTableFunction(n, ss))))
+		ss = c.compileSort(n, ns, c.compileProjection(n, c.compileRestrict(n, c.compileTableFunction(n, ss))))
 		return ss, nil
 	case plan.Node_SINK_SCAN:
 		receivers := make([]*process.WaitRegister, len(n.SourceStep))
@@ -1805,7 +1805,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 			r.Ctx = rs.Proc.Ctx
 		}
 		rs.Proc.Reg.MergeReceivers = receivers
-		ss = c.compileSort(n, []*Scope{rs})
+		ss = c.compileSort(n, ns, []*Scope{rs})
 		return ss, nil
 	case plan.Node_SINK:
 		receivers := c.getStepRegs(step)
@@ -2916,13 +2916,13 @@ func (c *Compile) compilePartition(n *plan.Node, ss []*Scope) []*Scope {
 	return []*Scope{rs}
 }
 
-func (c *Compile) compileSort(n *plan.Node, ss []*Scope) []*Scope {
+func (c *Compile) compileSort(n *plan.Node, ns []*plan.Node, ss []*Scope) []*Scope {
 	switch {
 	case n.Limit != nil && n.Offset == nil && len(n.OrderBy) > 0: // top
-		return c.compileTop(n, n.Limit, ss)
+		return c.compileTop(n, ns, n.Limit, ss)
 
 	case n.Limit == nil && n.Offset == nil && len(n.OrderBy) > 0: // top
-		return c.compileOrder(n, ss)
+		return c.compileOrder(n, ns, ss)
 
 	case n.Limit != nil && n.Offset != nil && len(n.OrderBy) > 0:
 		if rule.IsConstant(n.Limit, false) && rule.IsConstant(n.Offset, false) {
@@ -2948,22 +2948,22 @@ func (c *Compile) compileSort(n *plan.Node, ss []*Scope) []*Scope {
 			}
 			if !overflow && topN <= 8192*2 {
 				// if n is small, convert `order by col limit m offset n` to `top m+n offset n`
-				return c.compileOffset(n, c.compileTop(n, plan2.MakePlan2Uint64ConstExprWithType(topN), ss))
+				return c.compileOffset(n, ns, c.compileTop(n, ns, plan2.MakePlan2Uint64ConstExprWithType(topN), ss))
 			}
 		}
-		return c.compileLimit(n, c.compileOffset(n, c.compileOrder(n, ss)))
+		return c.compileLimit(n, ns, c.compileOffset(n, ns, c.compileOrder(n, ns, ss)))
 
 	case n.Limit == nil && n.Offset != nil && len(n.OrderBy) > 0: // order and offset
-		return c.compileOffset(n, c.compileOrder(n, ss))
+		return c.compileOffset(n, ns, c.compileOrder(n, ns, ss))
 
 	case n.Limit != nil && n.Offset == nil && len(n.OrderBy) == 0: // limit
-		return c.compileLimit(n, ss)
+		return c.compileLimit(n, ns, ss)
 
 	case n.Limit == nil && n.Offset != nil && len(n.OrderBy) == 0: // offset
-		return c.compileOffset(n, ss)
+		return c.compileOffset(n, ns, ss)
 
 	case n.Limit != nil && n.Offset != nil && len(n.OrderBy) == 0: // limit and offset
-		return c.compileLimit(n, c.compileOffset(n, ss))
+		return c.compileLimit(n, ns, c.compileOffset(n, ns, ss))
 
 	default:
 		return ss
@@ -2979,7 +2979,7 @@ func containBrokenNode(s *Scope) bool {
 	return false
 }
 
-func (c *Compile) compileTop(n *plan.Node, topN *plan.Expr, ss []*Scope) []*Scope {
+func (c *Compile) compileTop(n *plan.Node, ns []*plan.Node, topN *plan.Expr, ss []*Scope) []*Scope {
 	// use topN TO make scope.
 	if c.IsTpQuery() {
 		ss[0].appendInstruction(vm.Instruction{
@@ -3005,6 +3005,11 @@ func (c *Compile) compileTop(n *plan.Node, topN *plan.Expr, ss []*Scope) []*Scop
 		})
 	}
 	c.anal.isFirst = false
+	childNode := ns[n.Children[0]]
+	if len(c.cnList) > 1 && childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
+		// to avoid bugs on remote pipeline
+		ss = c.mergeShuffleJoinScopeList(ss)
+	}
 
 	rs := c.newMergeScope(ss)
 	rs.Instructions[0].Arg.Release()
@@ -3016,7 +3021,7 @@ func (c *Compile) compileTop(n *plan.Node, topN *plan.Expr, ss []*Scope) []*Scop
 	return []*Scope{rs}
 }
 
-func (c *Compile) compileOrder(n *plan.Node, ss []*Scope) []*Scope {
+func (c *Compile) compileOrder(n *plan.Node, ns []*plan.Node, ss []*Scope) []*Scope {
 	if c.IsTpQuery() {
 		ss[0].appendInstruction(vm.Instruction{
 			Op:      vm.Order,
@@ -3046,6 +3051,13 @@ func (c *Compile) compileOrder(n *plan.Node, ss []*Scope) []*Scope {
 		})
 	}
 	c.anal.isFirst = false
+
+	childNode := ns[n.Children[0]]
+	if len(c.cnList) > 1 && childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
+		// to avoid bugs on remote pipeline
+		ss = c.mergeShuffleJoinScopeList(ss)
+	}
+
 	rs := c.newMergeScope(ss)
 	rs.appendInstruction(vm.Instruction{
 		Op:  vm.MergeOrder,
@@ -3088,7 +3100,7 @@ func (c *Compile) compileFill(n *plan.Node, ss []*Scope) []*Scope {
 	return []*Scope{rs}
 }
 
-func (c *Compile) compileOffset(n *plan.Node, ss []*Scope) []*Scope {
+func (c *Compile) compileOffset(n *plan.Node, ns []*plan.Node, ss []*Scope) []*Scope {
 	if c.IsTpQuery() {
 		ss[0].appendInstruction(vm.Instruction{
 			Op:      vm.Offset,
@@ -3106,6 +3118,11 @@ func (c *Compile) compileOffset(n *plan.Node, ss []*Scope) []*Scope {
 			ss[i] = c.newMergeScope([]*Scope{ss[i]})
 		}
 	}
+	childNode := ns[n.Children[0]]
+	if len(c.cnList) > 1 && childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
+		// to avoid bugs on remote pipeline
+		ss = c.mergeShuffleJoinScopeList(ss)
+	}
 
 	rs := c.newMergeScope(ss)
 	rs.Instructions[0].Arg.Release()
@@ -3117,7 +3134,7 @@ func (c *Compile) compileOffset(n *plan.Node, ss []*Scope) []*Scope {
 	return []*Scope{rs}
 }
 
-func (c *Compile) compileLimit(n *plan.Node, ss []*Scope) []*Scope {
+func (c *Compile) compileLimit(n *plan.Node, ns []*plan.Node, ss []*Scope) []*Scope {
 	if c.IsTpQuery() {
 		ss[0].appendInstruction(vm.Instruction{
 			Op:      vm.Limit,
@@ -3142,6 +3159,11 @@ func (c *Compile) compileLimit(n *plan.Node, ss []*Scope) []*Scope {
 		})
 	}
 	c.anal.isFirst = false
+	childNode := ns[n.Children[0]]
+	if len(c.cnList) > 1 && childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
+		// to avoid bugs on remote pipeline
+		ss = c.mergeShuffleJoinScopeList(ss)
+	}
 
 	rs := c.newMergeScope(ss)
 	rs.Instructions[0].Arg.Release()
@@ -3302,7 +3324,7 @@ func (c *Compile) compileMergeGroup(n *plan.Node, ss []*Scope, ns []*plan.Node, 
 		})
 	}
 	c.anal.isFirst = false
-	if childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
+	if len(c.cnList) > 1 && childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
 		// to avoid bugs on remote pipeline
 		ss = c.mergeShuffleJoinScopeList(ss)
 	}
