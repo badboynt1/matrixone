@@ -2606,22 +2606,7 @@ func (c *Compile) compileShuffleJoin(node, left, right *plan.Node, lefts, rights
 		leftTyps[i] = dupType(&expr.Typ)
 	}
 
-	parent, children := c.newShuffleJoinScopeList(lefts, rights, node)
-	if parent != nil {
-		lastOperator := make([]vm.Instruction, 0, len(children))
-		for i := range children {
-			ilen := len(children[i].Instructions) - 1
-			lastOperator = append(lastOperator, children[i].Instructions[ilen])
-			children[i].Instructions = children[i].Instructions[:ilen]
-		}
-
-		defer func() {
-			// recovery the children's last operator
-			for i := range children {
-				children[i].appendInstruction(lastOperator[i])
-			}
-		}()
-	}
+	children := c.newShuffleJoinScopeList(lefts, rights, node)
 
 	switch node.JoinType {
 	case plan.Node_INNER:
@@ -2692,9 +2677,6 @@ func (c *Compile) compileShuffleJoin(node, left, right *plan.Node, lefts, rights
 		panic(moerr.NewNYI(c.proc.Ctx, fmt.Sprintf("shuffle join do not support join type '%v'", node.JoinType)))
 	}
 
-	if parent != nil {
-		return parent
-	}
 	return children
 }
 
@@ -2710,6 +2692,10 @@ func (c *Compile) compileBroadcastJoin(node, left, right *plan.Node, probeScopes
 	leftTyps := make([]types.Type, len(left.ProjectList))
 	for i, expr := range left.ProjectList {
 		leftTyps[i] = dupType(&expr.Typ)
+	}
+
+	if left.NodeType == plan.Node_JOIN && left.Stats.HashmapStats.Shuffle {
+		probeScopes = c.mergeShuffleJoinScopeList(probeScopes)
 	}
 
 	switch node.JoinType {
@@ -3741,13 +3727,24 @@ func (c *Compile) newBroadcastJoinScopeList(probeScopes []*Scope, buildScopes []
 	return rs
 }
 
-func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) ([]*Scope, []*Scope) {
-	single := len(c.cnList) <= 1
-	if single {
+func (c *Compile) mergeShuffleJoinScopeList(child []*Scope) []*Scope {
+	lenCN := len(c.cnList)
+	dop := len(child) / lenCN
+	mergeScope := make([]*Scope, 0, lenCN)
+	for i, n := range c.cnList {
+		start := i * dop
+		end := start + dop
+		ss := child[start:end]
+		mergeScope = append(mergeScope, c.newMergeRemoteScope(ss, n))
+	}
+	return mergeScope
+}
+
+func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) []*Scope {
+	if len(c.cnList) <= 1 {
 		n.Stats.HashmapStats.ShuffleTypeForMultiCN = plan.ShuffleTypeForMultiCN_Simple
 	}
 
-	var parent []*Scope
 	children := make([]*Scope, 0, len(c.cnList))
 	lnum := len(left)
 	sum := lnum + len(right)
@@ -3767,9 +3764,6 @@ func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) ([
 			}
 		}
 		children = append(children, ss...)
-		if !single {
-			parent = append(parent, c.newMergeRemoteScope(ss, n))
-		}
 	}
 
 	currentFirstFlag := c.anal.isFirst
@@ -3825,7 +3819,7 @@ func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) ([
 			children[0].PreScopes = append(children[0].PreScopes, scp)
 		}
 	}
-	return parent, children
+	return children
 }
 
 func (c *Compile) newJoinProbeScope(s *Scope, ss []*Scope) *Scope {
