@@ -1339,7 +1339,7 @@ func (c *Compile) compilePlanScope(step int32, curNodeIdx int32, ns []*plan.Node
 			return nil, err
 		}
 		c.setAnalyzeCurrent(right, curr)
-		ss = c.compileSort(n, ns, c.compileJoin(n, ns[n.Children[0]], ns[n.Children[1]], left, right))
+		ss = c.compileSort(n, ns, c.compileJoin(n, ns, left, right))
 		return ss, nil
 	case plan.Node_SORT:
 		curr := c.anal.curr
@@ -2567,11 +2567,11 @@ func (c *Compile) compileUnionAll(ss []*Scope, children []*Scope) []*Scope {
 	return []*Scope{rs}
 }
 
-func (c *Compile) compileJoin(node, left, right *plan.Node, probeScopes, buildScopes []*Scope) []*Scope {
+func (c *Compile) compileJoin(node *plan.Node, ns []*plan.Node, probeScopes, buildScopes []*Scope) []*Scope {
 	if node.Stats.HashmapStats.Shuffle {
-		return c.compileShuffleJoin(node, left, right, probeScopes, buildScopes)
+		return c.compileShuffleJoin(node, ns, probeScopes, buildScopes)
 	}
-	rs := c.compileBroadcastJoin(node, left, right, probeScopes, buildScopes)
+	rs := c.compileBroadcastJoin(node, ns, probeScopes, buildScopes)
 	if c.IsTpQuery() {
 		//construct join build operator for tp join
 		buildScopes[0].appendInstruction(constructJoinBuildInstruction(c, rs[0].Instructions[0], false, false))
@@ -2590,12 +2590,13 @@ func (c *Compile) compileJoin(node, left, right *plan.Node, probeScopes, buildSc
 	return rs
 }
 
-func (c *Compile) compileShuffleJoin(node, left, right *plan.Node, lefts, rights []*Scope) []*Scope {
+func (c *Compile) compileShuffleJoin(node *plan.Node, ns []*plan.Node, lefts, rights []*Scope) []*Scope {
 	isEq := plan2.IsEquiJoin2(node.OnList)
 	if !isEq {
 		panic("shuffle join only support equal join for now!")
 	}
-
+	left := ns[node.Children[0]]
+	right := ns[node.Children[1]]
 	rightTyps := make([]types.Type, len(right.ProjectList))
 	for i, expr := range right.ProjectList {
 		rightTyps[i] = dupType(&expr.Typ)
@@ -2680,10 +2681,11 @@ func (c *Compile) compileShuffleJoin(node, left, right *plan.Node, lefts, rights
 	return children
 }
 
-func (c *Compile) compileBroadcastJoin(node, left, right *plan.Node, probeScopes, buildScopes []*Scope) []*Scope {
+func (c *Compile) compileBroadcastJoin(node *plan.Node, ns []*plan.Node, probeScopes, buildScopes []*Scope) []*Scope {
 	var rs []*Scope
 	isEq := plan2.IsEquiJoin2(node.OnList)
-
+	left := ns[node.Children[0]]
+	right := ns[node.Children[1]]
 	rightTyps := make([]types.Type, len(right.ProjectList))
 	for i, expr := range right.ProjectList {
 		rightTyps[i] = dupType(&expr.Typ)
@@ -2694,8 +2696,12 @@ func (c *Compile) compileBroadcastJoin(node, left, right *plan.Node, probeScopes
 		leftTyps[i] = dupType(&expr.Typ)
 	}
 
-	if left.NodeType == plan.Node_JOIN && left.Stats.HashmapStats.Shuffle {
+	if plan2.IsShuffleChildren(left, ns) {
 		probeScopes = c.mergeShuffleJoinScopeList(probeScopes)
+	}
+	if len(c.cnList) > 1 && plan2.IsShuffleChildren(right, ns) {
+		//to avoid bugs on remote pipeline
+		buildScopes = c.mergeShuffleJoinScopeList(buildScopes)
 	}
 
 	switch node.JoinType {
@@ -3005,8 +3011,7 @@ func (c *Compile) compileTop(n *plan.Node, ns []*plan.Node, topN *plan.Expr, ss 
 		})
 	}
 	c.anal.isFirst = false
-	childNode := ns[n.Children[0]]
-	if len(c.cnList) > 1 && childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
+	if len(c.cnList) > 1 && plan2.IsShuffleChildren(ns[n.Children[0]], ns) {
 		// to avoid bugs on remote pipeline
 		ss = c.mergeShuffleJoinScopeList(ss)
 	}
@@ -3052,8 +3057,7 @@ func (c *Compile) compileOrder(n *plan.Node, ns []*plan.Node, ss []*Scope) []*Sc
 	}
 	c.anal.isFirst = false
 
-	childNode := ns[n.Children[0]]
-	if len(c.cnList) > 1 && childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
+	if len(c.cnList) > 1 && plan2.IsShuffleChildren(ns[n.Children[0]], ns) {
 		// to avoid bugs on remote pipeline
 		ss = c.mergeShuffleJoinScopeList(ss)
 	}
@@ -3118,8 +3122,7 @@ func (c *Compile) compileOffset(n *plan.Node, ns []*plan.Node, ss []*Scope) []*S
 			ss[i] = c.newMergeScope([]*Scope{ss[i]})
 		}
 	}
-	childNode := ns[n.Children[0]]
-	if len(c.cnList) > 1 && childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
+	if len(c.cnList) > 1 && plan2.IsShuffleChildren(ns[n.Children[0]], ns) {
 		// to avoid bugs on remote pipeline
 		ss = c.mergeShuffleJoinScopeList(ss)
 	}
@@ -3159,8 +3162,7 @@ func (c *Compile) compileLimit(n *plan.Node, ns []*plan.Node, ss []*Scope) []*Sc
 		})
 	}
 	c.anal.isFirst = false
-	childNode := ns[n.Children[0]]
-	if len(c.cnList) > 1 && childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
+	if len(c.cnList) > 1 && plan2.IsShuffleChildren(ns[n.Children[0]], ns) {
 		// to avoid bugs on remote pipeline
 		ss = c.mergeShuffleJoinScopeList(ss)
 	}
@@ -3324,7 +3326,7 @@ func (c *Compile) compileMergeGroup(n *plan.Node, ss []*Scope, ns []*plan.Node, 
 		})
 	}
 	c.anal.isFirst = false
-	if len(c.cnList) > 1 && childNode.NodeType == plan.Node_JOIN && childNode.Stats.HashmapStats.Shuffle {
+	if len(c.cnList) > 1 && plan2.IsShuffleChildren(childNode, ns) {
 		// to avoid bugs on remote pipeline
 		ss = c.mergeShuffleJoinScopeList(ss)
 	}
