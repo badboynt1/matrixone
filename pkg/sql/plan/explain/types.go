@@ -17,8 +17,9 @@ package explain
 import (
 	"bytes"
 	"context"
-	"github.com/matrixorigin/matrixone/pkg/pb/plan"
 	"strings"
+
+	"github.com/matrixorigin/matrixone/pkg/pb/plan"
 
 	"github.com/matrixorigin/matrixone/pkg/logutil"
 )
@@ -116,7 +117,7 @@ func (buf *ExplainDataBuffer) PushPlanTitle(title string) {
 	}
 	buf.CurrentLine++
 	buf.Lines = append(buf.Lines, title)
-	logutil.Infof(buf.Lines[buf.CurrentLine])
+	logutil.Debugf(buf.Lines[buf.CurrentLine])
 	buf.End++
 }
 

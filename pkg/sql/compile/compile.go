@@ -29,6 +29,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/matrixorigin/matrixone/pkg/sql/plan/explain"
+
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/offset"
 
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/intersect"
@@ -1045,6 +1047,11 @@ func (c *Compile) compileQuery(qry *plan.Query) ([]*Scope, error) {
 		c.removeUnavailableCN()
 		// sort by addr to get fixed order of CN list
 		sort.Slice(c.cnList, func(i, j int) bool { return c.cnList[i].Addr < c.cnList[j].Addr })
+	}
+
+	if c.isPrepare && !strings.Contains(c.sql, "sys_async_task") && !strings.Contains(c.sql, "sys_cron_task") {
+		fmt.Println("prepare statement: " + c.sql)
+		fmt.Println(explain.DebugPlan(c.pn))
 	}
 
 	if c.isPrepare && c.IsTpQuery() {
