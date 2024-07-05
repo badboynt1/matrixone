@@ -112,7 +112,7 @@ func DebugPlan(pl *plan.Plan) string {
 		impl := NewExplainQueryImpl(qry.Query)
 		buffer := NewExplainDataBuffer()
 		opt := &ExplainOptions{
-			Verbose: false,
+			Verbose: true,
 			Analyze: false,
 			Format:  EXPLAIN_FORMAT_TEXT,
 		}
