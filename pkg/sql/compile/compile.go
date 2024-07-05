@@ -1050,8 +1050,7 @@ func (c *Compile) compileQuery(qry *plan.Query) ([]*Scope, error) {
 	}
 
 	if c.isPrepare && !strings.Contains(c.sql, "sys_async_task") && !strings.Contains(c.sql, "sys_cron_task") {
-		fmt.Println("prepare statement: " + c.sql)
-		fmt.Println(explain.DebugPlan(c.pn))
+		fmt.Println(c.sql + "\n" + plan2.GetPlanTitle(c.pn.GetQuery(), false) + "\n" + explain.DebugPlan(c.pn))
 	}
 
 	if c.isPrepare && c.IsTpQuery() {
