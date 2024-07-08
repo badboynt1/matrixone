@@ -1051,15 +1051,11 @@ func (c *Compile) compileQuery(qry *plan.Query) ([]*Scope, error) {
 		sort.Slice(c.cnList, func(i, j int) bool { return c.cnList[i].Addr < c.cnList[j].Addr })
 	}
 
-<<<<<<< HEAD
 	if c.isPrepare && !strings.Contains(c.sql, "sys_async_task") && !strings.Contains(c.sql, "sys_cron_task") {
 		logutil.Infof("prepare statement:  " + c.sql + "\n" + plan2.GetPlanTitle(c.pn.GetQuery(), false) + "\n" + explain.DebugPlan(c.pn))
 	}
 
-	if c.isPrepare && c.IsTpQuery() {
-=======
 	if c.isPrepare && !c.IsTpQuery() {
->>>>>>> 7f582a662e85d6abd3b0c5f367a9fd8abc848b7b
 		return nil, cantCompileForPrepareErr
 	}
 
