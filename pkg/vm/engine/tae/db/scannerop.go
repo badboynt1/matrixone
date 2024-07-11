@@ -15,16 +15,15 @@
 package db
 
 import (
-	"math"
-	"sync/atomic"
-
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/common/util"
 	"github.com/matrixorigin/matrixone/pkg/logutil"
+	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/catalog"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/common"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/db/merge"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/iface/txnif"
+	dto "github.com/prometheus/client_model/go"
 )
 
 type ScannerOp interface {
@@ -42,15 +41,14 @@ type MergeTaskBuilder struct {
 	objDeltaLocCnt    map[*catalog.ObjectEntry]int
 	objDeltaLocRowCnt map[*catalog.ObjectEntry]uint32
 	distinctDeltaLocs map[string]struct{}
+	mergingObjs       map[*catalog.ObjectEntry]struct{}
 
 	objPolicy   merge.Policy
 	executor    *merge.MergeExecutor
 	tableRowCnt int
 	tableRowDel int
 
-	// concurrecy control
-	suspend    atomic.Bool
-	suspendCnt atomic.Int32
+	skipForTransPageLimit bool
 }
 
 func newMergeTaskBuilder(db *DB) *MergeTaskBuilder {
@@ -62,6 +60,7 @@ func newMergeTaskBuilder(db *DB) *MergeTaskBuilder {
 		objDeltaLocRowCnt: make(map[*catalog.ObjectEntry]uint32),
 		distinctDeltaLocs: make(map[string]struct{}),
 		objDeltaLocCnt:    make(map[*catalog.ObjectEntry]int),
+		mergingObjs:       make(map[*catalog.ObjectEntry]struct{}),
 	}
 
 	op.DatabaseFn = op.onDataBase
@@ -102,6 +101,21 @@ func (s *MergeTaskBuilder) resetForTable(entry *catalog.TableEntry) {
 
 func (s *MergeTaskBuilder) PreExecute() error {
 	s.executor.RefreshMemInfo()
+	for obj := range s.mergingObjs {
+		if !objectValid(obj) {
+			delete(s.mergingObjs, obj)
+		}
+	}
+	s.skipForTransPageLimit = false
+	m := &dto.Metric{}
+	v2.TaskMergeTransferPageLengthGauge.Write(m)
+	pagesize := m.GetGauge().GetValue() * 28 /*int32 + rowid(24b)*/ * 1.3 /*map inflationg factor*/
+	if pagesize > float64(s.executor.TransferPageSizeLimit()) {
+		logutil.Infof("[mergeblocks] skip merge scanning due to transfer page %s, limit %s",
+			common.HumanReadableBytes(int(pagesize)),
+			common.HumanReadableBytes(int(s.executor.TransferPageSizeLimit())))
+		s.skipForTransPageLimit = true
+	}
 	return nil
 }
 
@@ -110,27 +124,28 @@ func (s *MergeTaskBuilder) PostExecute() error {
 	return nil
 }
 func (s *MergeTaskBuilder) onDataBase(dbEntry *catalog.DBEntry) (err error) {
-	if s.suspend.Load() {
-		s.suspendCnt.Add(1)
-		return moerr.GetOkStopCurrRecur()
-	}
-	s.suspendCnt.Store(0)
 	if merge.StopMerge.Load() {
 		return moerr.GetOkStopCurrRecur()
 	}
 	if s.executor.MemAvailBytes() < 100*common.Const1MBytes {
 		return moerr.GetOkStopCurrRecur()
 	}
+
+	if s.skipForTransPageLimit {
+		return moerr.GetOkStopCurrRecur()
+	}
+
 	return
 }
 
 func (s *MergeTaskBuilder) onTable(tableEntry *catalog.TableEntry) (err error) {
-	if merge.StopMerge.Load() || s.suspend.Load() {
+	if merge.StopMerge.Load() {
 		return moerr.GetOkStopCurrRecur()
 	}
 	if !tableEntry.IsActive() {
 		return moerr.GetOkStopCurrRecur()
 	}
+
 	tableEntry.RLock()
 	// this table is creating or altering
 	if !tableEntry.IsCommittedLocked() {
@@ -178,13 +193,6 @@ func (s *MergeTaskBuilder) onTable(tableEntry *catalog.TableEntry) (err error) {
 			}
 		}
 	}
-
-	rate := float64(deltaLocRows) / float64(tblRows)
-	if !math.IsNaN(rate) {
-		logutil.Infof(
-			"[DeltaLoc Merge] tblId: %s(%d), rows: %d, deltaLoc: %d, deltaLocRows: %d, rate: %f",
-			s.name, s.tid, tblRows, distinctDeltaLocs, deltaLocRows, rate)
-	}
 	return
 }
 
@@ -196,15 +204,20 @@ func (s *MergeTaskBuilder) onPostTable(tableEntry *catalog.TableEntry) (err erro
 	}
 	// delObjs := s.ObjectHelper.finish()
 
-	mobjs, kind := s.objPolicy.Revise(s.executor.CPUPercent(), int64(s.executor.MemAvailBytes()),
-		merge.DeltaLocMerge.Load())
+	mobjs, kind := s.objPolicy.Revise(s.executor.CPUPercent(), int64(s.executor.MemAvailBytes()))
 	if len(mobjs) > 1 {
+		for _, m := range mobjs {
+			s.mergingObjs[m] = struct{}{}
+		}
 		s.executor.ExecuteFor(tableEntry, mobjs, kind)
 	}
 	return
 }
 
 func (s *MergeTaskBuilder) onObject(objectEntry *catalog.ObjectEntry) (err error) {
+	if _, ok := s.mergingObjs[objectEntry]; ok {
+		return moerr.GetOkStopCurrRecur()
+	}
 	if !objectEntry.IsActive() {
 		return moerr.GetOkStopCurrRecur()
 	}
@@ -216,7 +229,7 @@ func (s *MergeTaskBuilder) onObject(objectEntry *catalog.ObjectEntry) (err error
 	// Rows will check objectStat, and if not loaded, it will load it.
 	remainingRows := objectEntry.GetRemainingRows()
 	deltaLocRows := s.objDeltaLocRowCnt[objectEntry]
-	if merge.DeltaLocMerge.Load() && deltaLocRows > uint32(remainingRows) {
+	if !merge.DisableDeltaLocMerge.Load() && deltaLocRows > uint32(remainingRows) {
 		deltaLocCnt := s.objDeltaLocCnt[objectEntry]
 		rate := float64(deltaLocRows) / float64(remainingRows)
 		logutil.Infof(
