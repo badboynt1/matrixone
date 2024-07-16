@@ -39,7 +39,6 @@ func (innerJoin *InnerJoin) OpType() vm.OpType {
 
 func (innerJoin *InnerJoin) Prepare(proc *process.Process) (err error) {
 	innerJoin.ctr = new(container)
-	innerJoin.ctr.InitReceiver(proc, false)
 	innerJoin.ctr.inBuckets = make([]uint8, hashmap.UnitLimit)
 	innerJoin.ctr.vecs = make([]*vector.Vector, len(innerJoin.Conditions[0]))
 	innerJoin.ctr.evecs = make([]evalVector, len(innerJoin.Conditions[0]))
@@ -69,7 +68,7 @@ func (innerJoin *InnerJoin) Call(proc *process.Process) (vm.CallResult, error) {
 	for {
 		switch ctr.state {
 		case Build:
-			if err := ctr.build(anal); err != nil {
+			if err := innerJoin.build(proc, anal); err != nil {
 				return result, err
 			}
 			if ctr.mp == nil && !innerJoin.IsShuffle {
@@ -80,12 +79,12 @@ func (innerJoin *InnerJoin) Call(proc *process.Process) (vm.CallResult, error) {
 				ctr.state = Probe
 			}
 		case Probe:
-			if innerJoin.ctr.bat == nil {
-				msg := ctr.ReceiveFromSingleReg(0, anal)
-				if msg.Err != nil {
-					return result, msg.Err
+			if ctr.bat == nil {
+				res, err := vm.ChildrenCall(innerJoin.GetChildren(0), proc, anal)
+				if err != nil {
+					return result, err
 				}
-				bat := msg.Batch
+				bat := res.Batch
 				if bat == nil {
 					ctr.state = End
 					continue
@@ -126,12 +125,13 @@ func (innerJoin *InnerJoin) Call(proc *process.Process) (vm.CallResult, error) {
 	}
 }
 
-func (ctr *container) receiveHashMap(anal process.Analyze) error {
-	msg := ctr.ReceiveFromSingleReg(1, anal)
-	if msg.Err != nil {
-		return msg.Err
+func (innerJoin *InnerJoin) receiveHashMap(proc *process.Process, anal process.Analyze) error {
+	result, err := vm.ChildrenCall(innerJoin.GetChildren(1), proc, anal)
+	if err != nil {
+		return err
 	}
-	bat := msg.Batch
+	bat := result.Batch
+	ctr := innerJoin.ctr
 	if bat != nil && bat.AuxData != nil {
 		ctr.mp = bat.DupJmAuxData()
 		ctr.maxAllocSize = max(ctr.maxAllocSize, ctr.mp.Size())
@@ -139,13 +139,14 @@ func (ctr *container) receiveHashMap(anal process.Analyze) error {
 	return nil
 }
 
-func (ctr *container) receiveBatch(anal process.Analyze) error {
+func (innerJoin *InnerJoin) receiveBatch(proc *process.Process, anal process.Analyze) error {
+	ctr := innerJoin.ctr
 	for {
-		msg := ctr.ReceiveFromSingleReg(1, anal)
-		if msg.Err != nil {
-			return msg.Err
+		result, err := vm.ChildrenCall(innerJoin.GetChildren(1), proc, anal)
+		if err != nil {
+			return err
 		}
-		bat := msg.Batch
+		bat := result.Batch
 		if bat != nil {
 			ctr.batchRowCount += bat.RowCount()
 			ctr.batches = append(ctr.batches, bat)
@@ -161,12 +162,12 @@ func (ctr *container) receiveBatch(anal process.Analyze) error {
 	return nil
 }
 
-func (ctr *container) build(anal process.Analyze) error {
-	err := ctr.receiveHashMap(anal)
+func (innerJoin *InnerJoin) build(proc *process.Process, anal process.Analyze) error {
+	err := innerJoin.receiveHashMap(proc, anal)
 	if err != nil {
 		return err
 	}
-	return ctr.receiveBatch(anal)
+	return innerJoin.receiveBatch(proc, anal)
 }
 
 func (ctr *container) probe(ap *InnerJoin, proc *process.Process, anal process.Analyze, isFirst bool, isLast bool, result *vm.CallResult) error {
