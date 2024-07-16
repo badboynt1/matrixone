@@ -841,7 +841,7 @@ func constructTop(n *plan.Node, topN *plan.Expr) *top.Top {
 	return arg
 }
 
-func constructJoin(n *plan.Node, typs []types.Type, proc *process.Process) *join.InnerJoin {
+func constructInnerJoin(n *plan.Node, typs []types.Type, proc *process.Process) *join.InnerJoin {
 	result := make([]colexec.ResultPos, len(n.ProjectList))
 	for i, expr := range n.ProjectList {
 		result[i].Rel, result[i].Pos = constructJoinResult(expr, proc)

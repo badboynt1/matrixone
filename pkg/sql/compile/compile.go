@@ -2570,7 +2570,7 @@ func (c *Compile) compileShuffleJoin(node, left, right *plan.Node, lefts, rights
 	switch node.JoinType {
 	case plan.Node_INNER:
 		for i := range children {
-			op := constructJoin(node, rightTyps, c.proc)
+			op := constructInnerJoin(node, rightTyps, c.proc)
 			op.SetIdx(c.anal.curr)
 			children[i].setRootOperator(op)
 		}
@@ -2658,7 +2658,7 @@ func (c *Compile) compileBroadcastJoin(node, left, right *plan.Node, ns []*plan.
 		} else {
 			for i := range rs {
 				if isEq {
-					op := constructJoin(node, rightTyps, c.proc)
+					op := constructInnerJoin(node, rightTyps, c.proc)
 					op.SetIdx(c.anal.curr)
 					rs[i].setRootOperator(op)
 				} else {
@@ -3665,10 +3665,10 @@ func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) ([
 
 func (c *Compile) newJoinProbeScope(s *Scope, ss []*Scope) *Scope {
 	rs := newScope(Merge)
-	merge := merge.NewArgument()
-	merge.SetIdx(vm.GetLeafOp(s.RootOp).GetOperatorBase().GetIdx())
-	merge.SetIsFirst(true)
-	rs.setRootOperator(merge)
+	mergeOp := merge.NewArgument()
+	mergeOp.SetIdx(vm.GetLeafOp(s.RootOp).GetOperatorBase().GetIdx())
+	mergeOp.SetIsFirst(true)
+	rs.setRootOperator(mergeOp)
 	rs.Proc = process.NewFromProc(s.Proc, s.Proc.Ctx, s.BuildIdx)
 	for i := 0; i < s.BuildIdx; i++ {
 		regTransplant(s, rs, i, i)
@@ -3700,10 +3700,10 @@ func (c *Compile) newJoinBuildScope(s *Scope, ss []*Scope) *Scope {
 	for i := 0; i < buildLen; i++ {
 		regTransplant(s, rs, i+s.BuildIdx, i)
 	}
-	merge := merge.NewArgument()
-	merge.SetIdx(c.anal.curr)
-	merge.SetIsFirst(c.anal.isFirst)
-	rs.setRootOperator(merge)
+	mergeOp := merge.NewArgument()
+	mergeOp.SetIdx(c.anal.curr)
+	mergeOp.SetIsFirst(c.anal.isFirst)
+	rs.setRootOperator(mergeOp)
 	rs.setRootOperator(constructJoinBuildOperator(c, vm.GetLeafOp(s.RootOp), ss != nil, s.ShuffleCnt > 0))
 
 	if ss == nil { // unparallel, send the hashtable to join scope directly
