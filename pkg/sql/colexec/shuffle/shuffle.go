@@ -73,10 +73,7 @@ SENDLAST:
 		//send shuffle pool
 		for i, bat := range shuffle.ctr.shufflePool {
 			if bat != nil {
-				//need to wait for runtimefilter_pass before send batch
-				if err := shuffle.handleRuntimeFilter(proc); err != nil {
-					return vm.CancelResult, err
-				}
+
 				result.Batch = bat
 				shuffle.ctr.lastSentBatch = result.Batch
 				shuffle.ctr.shufflePool[i] = nil
@@ -109,17 +106,10 @@ SENDLAST:
 			}
 			if bat != nil {
 				// can directly send this batch
-				//need to wait for runtimefilter_pass before send batch
-				if err := shuffle.handleRuntimeFilter(proc); err != nil {
-					return vm.CancelResult, err
-				}
+
 				return result, nil
 			}
 		}
-	}
-	//need to wait for runtimefilter_pass before send batch
-	if err := shuffle.handleRuntimeFilter(proc); err != nil {
-		return vm.CancelResult, err
 	}
 
 	// send batch in send pool
