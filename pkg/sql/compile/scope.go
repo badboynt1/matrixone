@@ -484,8 +484,9 @@ func buildJoinParallelRun(s *Scope, c *Compile) (*Scope, error) {
 		ss[i] = newScope(Merge)
 		ss[i].NodeInfo = s.NodeInfo
 		ss[i].Proc = process.NewFromProc(s.Proc, s.Proc.Ctx, 1)
+		ss[i].Proc.Reg.MergeReceivers[0] = s.Proc.Reg.MergeReceivers[0]
+		ss[i].Proc.Reg.MergeReceivers[0].Ctx = ss[i].Proc.Ctx
 	}
-	probeScope := c.newBroadcastJoinProbeScope(s, ss)
 
 	ns, err := newParallelScope(c, s, ss)
 	if err != nil {
@@ -522,7 +523,6 @@ func buildJoinParallelRun(s *Scope, c *Compile) (*Scope, error) {
 		}
 	}
 
-	ns.PreScopes = append(ns.PreScopes, probeScope)
 	ns.PreScopes = append(ns.PreScopes, buildScope)
 	ns.PreScopes = append(ns.PreScopes, chp...)
 
