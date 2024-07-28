@@ -521,9 +521,10 @@ func buildJoinParallelRun(s *Scope, c *Compile) (*Scope, error) {
 			}
 		}
 	}
-	ns.PreScopes = append(ns.PreScopes, chp...)
-	ns.PreScopes = append(ns.PreScopes, buildScope)
+
 	ns.PreScopes = append(ns.PreScopes, probeScope)
+	ns.PreScopes = append(ns.PreScopes, buildScope)
+	ns.PreScopes = append(ns.PreScopes, chp...)
 
 	return ns, nil
 }
