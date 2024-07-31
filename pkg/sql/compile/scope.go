@@ -465,18 +465,18 @@ func buildJoinParallelRun(s *Scope, c *Compile) (*Scope, error) {
 	if s.ShuffleIdx > 0 { //shuffle join
 		buildScope := c.newJoinBuildScope(s, 1)
 		s.PreScopes = append(s.PreScopes, buildScope)
-		if s.BuildIdx > 1 {
-			probeScope := c.newJoinProbeScopeWithBidx(s)
-			s.PreScopes = append(s.PreScopes, probeScope)
-		}
-		s.Proc.Reg.MergeReceivers = s.Proc.Reg.MergeReceivers[:1]
+		s.Proc.Reg.MergeReceivers = s.Proc.Reg.MergeReceivers[:s.BuildIdx]
 		return s, nil
 	}
 
 	if mcpu <= 1 { // broadcast join with no parallel
 		buildScope := c.newJoinBuildScope(s, 1)
 		s.PreScopes = append(s.PreScopes, buildScope)
-		s.Proc.Reg.MergeReceivers = s.Proc.Reg.MergeReceivers[:s.BuildIdx]
+		if s.BuildIdx > 1 {
+			probeScope := c.newJoinProbeScopeWithBidx(s)
+			s.PreScopes = append(s.PreScopes, probeScope)
+		}
+		s.Proc.Reg.MergeReceivers = s.Proc.Reg.MergeReceivers[:1]
 		return s, nil
 	}
 
