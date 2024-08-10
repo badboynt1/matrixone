@@ -70,7 +70,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/minus"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/offset"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/output"
-	"github.com/matrixorigin/matrixone/pkg/sql/colexec/projection"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/sample"
 	"github.com/matrixorigin/matrixone/pkg/sql/parsers/tree"
 	plan2 "github.com/matrixorigin/matrixone/pkg/sql/plan"
@@ -95,6 +94,8 @@ const (
 	DistributedThreshold     uint64 = 10 * mpool.MB
 	SingleLineSizeEstimate   uint64 = 300 * mpool.B
 	shuffleChannelBufferSize        = 16
+
+	NoAccountId = -1
 )
 
 var (
@@ -427,7 +428,11 @@ func (c *Compile) printPipeline() {
 	if c.IsTpQuery() {
 		fmt.Println("pipeline for tp query, current CN addr ", c.addr)
 	} else {
+<<<<<<< HEAD
 		fmt.Println("pipeline for ap query, current CN addr ", c.addr)
+=======
+		fmt.Println("pipeline for ap query! current cn", c.addr, "sql: ", c.originSQL)
+>>>>>>> 99736a72c4e46d6dd9952c352027f6897594b77c
 	}
 	fmt.Println(DebugShowScopes(c.scope))
 }
@@ -1595,15 +1600,21 @@ func (c *Compile) compileExternScan(n *plan.Node) ([]*Scope, error) {
 	if time.Since(t) > time.Second {
 		c.proc.Infof(ctx, "read file offset cost %v", time.Since(t))
 	}
-	ss := make([]*Scope, 1)
+
+	var ss []*Scope
 	if param.Parallel {
 		ss = make([]*Scope, len(c.cnList))
+		for i := range ss {
+			ss[i] = c.constructScopeForExternal(c.cnList[i].Addr, param.Parallel)
+		}
+	} else {
+		ss = make([]*Scope, 1)
+		ss[0] = c.constructScopeForExternal(c.addr, param.Parallel)
 	}
 	pre := 0
 
 	currentFirstFlag := c.anal.isFirst
 	for i := range ss {
-		ss[i] = c.constructScopeForExternal(c.cnList[i].Addr, param.Parallel)
 		ss[i].IsLoad = true
 		count := ID2Addr[i]
 		fileOffsetTmp := make([]*pipeline.FileOffset, len(fileList))
@@ -1906,15 +1917,167 @@ func (c *Compile) compileProjection(n *plan.Node, ss []*Scope) []*Scope {
 	if len(n.ProjectList) == 0 {
 		return ss
 	}
-	currentFirstFlag := c.anal.isFirst
-	var op *projection.Projection
+
 	for i := range ss {
-		op = constructProjection(n)
-		op.SetAnalyzeControl(c.anal.curNodeIdx, currentFirstFlag)
-		ss[i].setRootOperator(op)
+		c.setProjection(n, ss[i])
 	}
+
+	/*for i := range ss {
+		if ss[i].RootOp == nil {
+			c.setProjection(n, ss[i])
+			continue
+		}
+		_, ok := c.stmt.(*tree.Select)
+		if !ok {
+			c.setProjection(n, ss[i])
+			continue
+		}
+		switch ss[i].RootOp.(type) {
+		case *table_scan.TableScan:
+			if ss[i].RootOp.(*table_scan.TableScan).ProjectList == nil {
+				ss[i].RootOp.(*table_scan.TableScan).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *value_scan.ValueScan:
+			if ss[i].RootOp.(*value_scan.ValueScan).ProjectList == nil {
+				ss[i].RootOp.(*value_scan.ValueScan).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *fill.Fill:
+			if ss[i].RootOp.(*fill.Fill).ProjectList == nil {
+				ss[i].RootOp.(*fill.Fill).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *source.Source:
+			if ss[i].RootOp.(*source.Source).ProjectList == nil {
+				ss[i].RootOp.(*source.Source).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *external.External:
+			if ss[i].RootOp.(*external.External).ProjectList == nil {
+				ss[i].RootOp.(*external.External).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *group.Group:
+			if ss[i].RootOp.(*group.Group).ProjectList == nil {
+				ss[i].RootOp.(*group.Group).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *mergegroup.MergeGroup:
+			if ss[i].RootOp.(*mergegroup.MergeGroup).ProjectList == nil {
+				ss[i].RootOp.(*mergegroup.MergeGroup).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *anti.AntiJoin:
+			if ss[i].RootOp.(*anti.AntiJoin).ProjectList == nil {
+				ss[i].RootOp.(*anti.AntiJoin).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *indexjoin.IndexJoin:
+			if ss[i].RootOp.(*indexjoin.IndexJoin).ProjectList == nil {
+				ss[i].RootOp.(*indexjoin.IndexJoin).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *join.InnerJoin:
+			if ss[i].RootOp.(*join.InnerJoin).ProjectList == nil {
+				ss[i].RootOp.(*join.InnerJoin).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *left.LeftJoin:
+			if ss[i].RootOp.(*left.LeftJoin).ProjectList == nil {
+				ss[i].RootOp.(*left.LeftJoin).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *loopanti.LoopAnti:
+			if ss[i].RootOp.(*loopanti.LoopAnti).ProjectList == nil {
+				ss[i].RootOp.(*loopanti.LoopAnti).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *loopjoin.LoopJoin:
+			if ss[i].RootOp.(*loopjoin.LoopJoin).ProjectList == nil {
+				ss[i].RootOp.(*loopjoin.LoopJoin).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *loopleft.LoopLeft:
+			if ss[i].RootOp.(*loopleft.LoopLeft).ProjectList == nil {
+				ss[i].RootOp.(*loopleft.LoopLeft).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *loopmark.LoopMark:
+			if ss[i].RootOp.(*loopmark.LoopMark).ProjectList == nil {
+				ss[i].RootOp.(*loopmark.LoopMark).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *loopsemi.LoopSemi:
+			if ss[i].RootOp.(*loopsemi.LoopSemi).ProjectList == nil {
+				ss[i].RootOp.(*loopsemi.LoopSemi).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *loopsingle.LoopSingle:
+			if ss[i].RootOp.(*loopsingle.LoopSingle).ProjectList == nil {
+				ss[i].RootOp.(*loopsingle.LoopSingle).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *mark.MarkJoin:
+			if ss[i].RootOp.(*mark.MarkJoin).ProjectList == nil {
+				ss[i].RootOp.(*mark.MarkJoin).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *product.Product:
+			if ss[i].RootOp.(*product.Product).ProjectList == nil {
+				ss[i].RootOp.(*product.Product).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *productl2.Productl2:
+			if ss[i].RootOp.(*productl2.Productl2).ProjectList == nil {
+				ss[i].RootOp.(*productl2.Productl2).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *semi.SemiJoin:
+			if ss[i].RootOp.(*semi.SemiJoin).ProjectList == nil {
+				ss[i].RootOp.(*semi.SemiJoin).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+		case *single.SingleJoin:
+			if ss[i].RootOp.(*single.SingleJoin).ProjectList == nil {
+				ss[i].RootOp.(*single.SingleJoin).ProjectList = n.ProjectList
+			} else {
+				c.setProjection(n, ss[i])
+			}
+
+		default:
+			c.setProjection(n, ss[i])
+		}
+	}*/
 	c.anal.isFirst = false
 	return ss
+}
+
+func (c *Compile) setProjection(n *plan.Node, s *Scope) {
+	op := constructProjection(n)
+	op.SetAnalyzeControl(c.anal.curNodeIdx, c.anal.isFirst)
+	s.setRootOperator(op)
 }
 
 func (c *Compile) compileTPUnion(n *plan.Node, ss []*Scope, children []*Scope) []*Scope {
@@ -3335,10 +3498,10 @@ func (c *Compile) newBroadcastJoinScopeList(probeScopes []*Scope, buildScopes []
 		}
 		rs[i].Proc.Reg.MergeReceivers = append(rs[i].Proc.Reg.MergeReceivers, w)
 	}
-	// all join's first flag will setting in newLeftScope and newRightScope
-	// so we set it to false now
+
 	if c.IsTpQuery() {
 		rs[0].PreScopes = append(rs[0].PreScopes, buildScopes[0])
+<<<<<<< HEAD
 	} else {
 		c.anal.isFirst = false
 		for i := range rs {
@@ -3354,8 +3517,28 @@ func (c *Compile) newBroadcastJoinScopeList(probeScopes []*Scope, buildScopes []
 				break
 			}
 		}
+=======
+		return rs
+>>>>>>> 99736a72c4e46d6dd9952c352027f6897594b77c
 	}
 
+	idx := 0
+	// all join's first flag will setting in newLeftScope and newRightScope
+	// so we set it to false now
+	c.anal.isFirst = false
+	for i := range rs {
+		if isSameCN(rs[i].NodeInfo.Addr, c.addr) {
+			idx = i
+			break
+		}
+	}
+	mergeBuild := buildScopes[0]
+	if len(buildScopes) > 1 {
+		mergeBuild = c.newMergeScope(buildScopes)
+	}
+	mergeBuild.setRootOperator(constructDispatch(rs[idx].BuildIdx, rs, c.addr, n, false))
+	mergeBuild.IsEnd = true
+	rs[idx].PreScopes = append(rs[idx].PreScopes, mergeBuild)
 	return rs
 }
 
@@ -4306,10 +4489,14 @@ func (s *Scope) affectedRows() uint64 {
 }
 
 func (c *Compile) runSql(sql string) error {
+	return c.runSqlWithAccountId(sql, NoAccountId)
+}
+
+func (c *Compile) runSqlWithAccountId(sql string, accountId int32) error {
 	if sql == "" {
 		return nil
 	}
-	res, err := c.runSqlWithResult(sql)
+	res, err := c.runSqlWithResult(sql, accountId)
 	if err != nil {
 		return err
 	}
@@ -4317,7 +4504,7 @@ func (c *Compile) runSql(sql string) error {
 	return nil
 }
 
-func (c *Compile) runSqlWithResult(sql string) (executor.Result, error) {
+func (c *Compile) runSqlWithResult(sql string, accountId int32) (executor.Result, error) {
 	v, ok := moruntime.ServiceRuntime(c.proc.GetService()).GetGlobalVariables(moruntime.InternalSQLExecutor)
 	if !ok {
 		panic("missing lock service")
@@ -4342,7 +4529,12 @@ func (c *Compile) runSqlWithResult(sql string) (executor.Result, error) {
 		WithDatabase(c.db).
 		WithTimeZone(c.proc.GetSessionInfo().TimeZone).
 		WithLowerCaseTableNames(&lower)
-	return exec.Exec(c.proc.Ctx, sql, opts)
+
+	ctx := c.proc.Ctx
+	if accountId >= 0 {
+		ctx = defines.AttachAccountId(c.proc.Ctx, uint32(accountId))
+	}
+	return exec.Exec(ctx, sql, opts)
 }
 
 func evalRowsetData(proc *process.Process,
@@ -4461,7 +4653,7 @@ func detectFkSelfRefer(c *Compile, detectSqls []string) error {
 
 // runDetectSql runs the fk detecting sql
 func runDetectSql(c *Compile, sql string) error {
-	res, err := c.runSqlWithResult(sql)
+	res, err := c.runSqlWithResult(sql, NoAccountId)
 	if err != nil {
 		c.proc.Errorf(c.proc.Ctx, "The sql that caused the fk self refer check failed is %s, and generated background sql is %s", c.sql, sql)
 		return err
@@ -4482,7 +4674,7 @@ func runDetectSql(c *Compile, sql string) error {
 
 // runDetectFkReferToDBSql runs the fk detecting sql
 func runDetectFkReferToDBSql(c *Compile, sql string) error {
-	res, err := c.runSqlWithResult(sql)
+	res, err := c.runSqlWithResult(sql, NoAccountId)
 	if err != nil {
 		c.proc.Errorf(c.proc.Ctx, "The sql that caused the fk self refer check failed is %s, and generated background sql is %s", c.sql, sql)
 		return err
