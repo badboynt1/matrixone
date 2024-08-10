@@ -253,11 +253,7 @@ func debugShowScopes(ss []*Scope, gap int, rmp map[*process.WaitRegister]int) st
 		if ss[i].Proc != nil {
 			receiverStr = getReceiverStr(ss[i], ss[i].Proc.Reg.MergeReceivers)
 		}
-<<<<<<< HEAD
-		str += fmt.Sprintf("Scope %d (Magic: %s, addr:%v,  mcpu: %v, Receiver: %s): [", i+1, magicShow(ss[i].Magic), ss[i].NodeInfo.Addr, ss[i].NodeInfo.Mcpu, receiverStr)
-=======
 		str += fmt.Sprintf("Scope %d (Magic: %s, addr:%v, mcpu: %v, Receiver: %s): [", i+1, magicShow(ss[i].Magic), ss[i].NodeInfo.Addr, ss[i].NodeInfo.Mcpu, receiverStr)
->>>>>>> 99736a72c4e46d6dd9952c352027f6897594b77c
 
 		vm.HandleAllOp(ss[i].RootOp, func(parentOp vm.Operator, op vm.Operator) error {
 			if op.GetOperatorBase().NumChildren() != 0 {

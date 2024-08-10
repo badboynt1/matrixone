@@ -428,11 +428,7 @@ func (c *Compile) printPipeline() {
 	if c.IsTpQuery() {
 		fmt.Println("pipeline for tp query, current CN addr ", c.addr)
 	} else {
-<<<<<<< HEAD
-		fmt.Println("pipeline for ap query, current CN addr ", c.addr)
-=======
 		fmt.Println("pipeline for ap query! current cn", c.addr, "sql: ", c.originSQL)
->>>>>>> 99736a72c4e46d6dd9952c352027f6897594b77c
 	}
 	fmt.Println(DebugShowScopes(c.scope))
 }
@@ -3501,25 +3497,7 @@ func (c *Compile) newBroadcastJoinScopeList(probeScopes []*Scope, buildScopes []
 
 	if c.IsTpQuery() {
 		rs[0].PreScopes = append(rs[0].PreScopes, buildScopes[0])
-<<<<<<< HEAD
-	} else {
-		c.anal.isFirst = false
-		for i := range rs {
-			if isSameCN(rs[i].NodeInfo.Addr, c.addr) {
-				mergeBuild := buildScopes[0]
-				if len(buildScopes) > 1 {
-					buildScopes = c.mergeShuffleScopesIfNeeded(buildScopes)
-					mergeBuild = c.newMergeScope(buildScopes)
-				}
-				mergeBuild.setRootOperator(constructDispatch(rs[i].BuildIdx, rs, c.addr, n, false))
-				mergeBuild.IsEnd = true
-				rs[i].PreScopes = append(rs[i].PreScopes, mergeBuild)
-				break
-			}
-		}
-=======
 		return rs
->>>>>>> 99736a72c4e46d6dd9952c352027f6897594b77c
 	}
 
 	idx := 0
