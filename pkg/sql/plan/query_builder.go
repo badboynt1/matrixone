@@ -1554,7 +1554,7 @@ func (builder *QueryBuilder) createQuery() (*Query, error) {
 		// after this ,never call ReCalcNodeStats again !!!
 
 		if builder.isForUpdate {
-			reCheckifNeedLockWholeTable(builder, false)
+			reCheckifNeedLockWholeTable(builder)
 		}
 
 		builder.handleMessgaes(rootID)
@@ -2623,6 +2623,7 @@ func (builder *QueryBuilder) buildSelect(stmt *tree.Select, ctx *BindContext, is
 			}
 		}
 		if builder.isForUpdate {
+			lockNode.Children[0] = nodeID
 			nodeID = builder.appendNode(lockNode, ctx)
 		}
 	}
