@@ -70,7 +70,10 @@ func (merge *Merge) Call(proc *process.Process) (vm.CallResult, error) {
 		}
 
 		merge.ctr.buf = msg.Batch
-
+		if merge.SinkScan {
+			proc.PutBatch(merge.ctr.buf)
+			continue
+		}
 		break
 	}
 
