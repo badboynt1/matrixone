@@ -69,10 +69,11 @@ func (mergeCTE *MergeCTE) Call(proc *process.Process) (vm.CallResult, error) {
 			result.Status = vm.ExecStop
 			return result, err
 		}
-		if result.Batch != nil {
+		if result.Batch != nil && !result.Batch.IsEmpty() {
+			atomic.AddInt64(&result.Batch.Cnt, 1)
 			logutil.Infof("receive batch in mergecte from 0 %v rows", result.Batch.RowCount())
 		}
-		atomic.AddInt64(&result.Batch.Cnt, 1)
+
 		mergeCTE.ctr.buf = result.Batch
 		if mergeCTE.ctr.buf == nil {
 			mergeCTE.ctr.status = sendLastTag
