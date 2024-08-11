@@ -69,7 +69,7 @@ func (mergeCTE *MergeCTE) Call(proc *process.Process) (vm.CallResult, error) {
 			result.Status = vm.ExecStop
 			return result, err
 		}
-		if result.Batch != nil && !result.Batch.IsEmpty() {
+		if result.Batch != nil {
 			atomic.AddInt64(&result.Batch.Cnt, 1)
 			logutil.Infof("receive batch in mergecte from 0 %v rows", result.Batch.RowCount())
 		}
@@ -93,8 +93,7 @@ func (mergeCTE *MergeCTE) Call(proc *process.Process) (vm.CallResult, error) {
 			}
 			if result.Batch != nil {
 				mergeop := mergeCTE.GetChildren(1).(*merge.Merge)
-				receivers := proc.Reg.MergeReceivers[mergeop.StartIDX:mergeop.EndIDX]
-				logutil.Infof("receive batch in mergecte from rest, channel %p, receive %v rows", receivers[0].Ch, result.Batch.RowCount())
+				logutil.Infof("receive batch in mergecte from rest, receiver start %v end %v,receive %v rows", mergeop.StartIDX, mergeop.EndIDX, result.Batch.RowCount())
 			}
 			if result.Batch == nil {
 				result.Batch = nil
