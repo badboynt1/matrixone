@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec/merge"
+	"sync/atomic"
 
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	"github.com/matrixorigin/matrixone/pkg/container/types"
@@ -71,6 +72,7 @@ func (mergeCTE *MergeCTE) Call(proc *process.Process) (vm.CallResult, error) {
 		if result.Batch != nil {
 			logutil.Infof("receive batch in mergecte from 0 %v rows", result.Batch.RowCount())
 		}
+		atomic.AddInt64(&result.Batch.Cnt, 1)
 		mergeCTE.ctr.buf = result.Batch
 		if mergeCTE.ctr.buf == nil {
 			mergeCTE.ctr.status = sendLastTag
@@ -99,6 +101,7 @@ func (mergeCTE *MergeCTE) Call(proc *process.Process) (vm.CallResult, error) {
 				return result, nil
 			}
 			mergeCTE.ctr.buf = result.Batch
+			atomic.AddInt64(&result.Batch.Cnt, 1)
 			if !mergeCTE.ctr.buf.Last() {
 				break
 			}
