@@ -17,13 +17,10 @@ package compile
 import (
 	"context"
 	"fmt"
-	"github.com/matrixorigin/matrixone/pkg/container/batch"
 	goruntime "runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
-
-	"github.com/matrixorigin/matrixone/pkg/sql/colexec/value_scan"
 
 	"github.com/matrixorigin/matrixone/pkg/vm/message"
 
@@ -301,31 +298,6 @@ func (s *Scope) MergeRun(c *Compile) error {
 		}
 	}()
 
-	if c.IsTpQuery() {
-		if tableScanOp, ok := vm.GetLeafOp(s.RootOp).(*table_scan.TableScan); ok {
-			// need to build readers for tp query
-			readers, _, err := s.buildReaders(c, 1)
-			if err != nil {
-				return err
-			}
-			s.DataSource.R = readers[0]
-			s.DataSource.R.SetOrderBy(s.DataSource.OrderBy)
-
-			tableScanOp.Reader = s.DataSource.R
-			tableScanOp.Attrs = s.DataSource.Attributes
-			tableScanOp.TableID = s.DataSource.TableDef.TblId
-			if s.DataSource.node != nil && len(s.DataSource.node.RecvMsgList) > 0 {
-				tableScanOp.TopValueMsgTag = s.DataSource.node.RecvMsgList[0].MsgTag
-			}
-		} else if valueScanOp, ok := vm.GetLeafOp(s.RootOp).(*value_scan.ValueScan); ok {
-			pipelineInputBatches := []*batch.Batch{s.DataSource.Bat}
-			if s.DataSource.Bat != nil {
-				pipelineInputBatches = append(pipelineInputBatches, nil)
-			}
-			valueScanOp.Batchs = pipelineInputBatches
-		}
-	}
-
 	p := pipeline.NewMerge(s.RootOp)
 	if _, err := p.MergeRun(s.Proc); err != nil {
 		select {
@@ -585,7 +557,7 @@ func buildScanParallelRun(s *Scope, c *Compile) (*Scope, error) {
 
 	// only one scan reader, it can just run without any merge.
 	if scanUsedCpuNumber == 1 {
-		s.Magic = Normal
+		s.Magic = Merge
 		s.DataSource.R = readers[0]
 		s.DataSource.R.SetOrderBy(s.DataSource.OrderBy)
 		return s, nil
