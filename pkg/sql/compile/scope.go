@@ -298,16 +298,9 @@ func (s *Scope) MergeRun(c *Compile) error {
 		}
 	}()
 
-	p := pipeline.NewMerge(s.RootOp)
-	if _, err := p.MergeRun(s.Proc); err != nil {
-		select {
-		case <-s.Proc.Ctx.Done():
-		default:
-			p.Cleanup(s.Proc, true, c.isPrepare, err)
-			return err
-		}
+	if err := s.Run(c); err != nil {
+		return err
 	}
-	p.Cleanup(s.Proc, false, c.isPrepare, nil)
 
 	// receive and check error from pre-scopes and remote scopes.
 	preScopeCount := len(s.PreScopes)
@@ -426,8 +419,10 @@ func (s *Scope) ParallelRun(c *Compile) (err error) {
 	}
 
 	if parallelScope.Magic == Normal {
+		fmt.Println("run normal scope" + DebugShowScopes([]*Scope{parallelScope}))
 		return parallelScope.Run(c)
 	}
+	fmt.Println("merge run scope" + DebugShowScopes([]*Scope{parallelScope}))
 	return parallelScope.MergeRun(c)
 }
 
@@ -557,7 +552,7 @@ func buildScanParallelRun(s *Scope, c *Compile) (*Scope, error) {
 
 	// only one scan reader, it can just run without any merge.
 	if scanUsedCpuNumber == 1 {
-		s.Magic = Merge
+		s.Magic = Normal
 		s.DataSource.R = readers[0]
 		s.DataSource.R.SetOrderBy(s.DataSource.OrderBy)
 		return s, nil
