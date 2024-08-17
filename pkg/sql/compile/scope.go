@@ -181,33 +181,28 @@ func (s *Scope) Run(c *Compile) (err error) {
 		}
 	}()
 
-	if s.DataSource == nil {
-		p = pipeline.NewMerge(s.RootOp)
-		_, err = p.MergeRun(s.Proc)
+	id := uint64(0)
+	if s.DataSource.TableDef != nil {
+		id = s.DataSource.TableDef.TblId
+	}
+	p = pipeline.New(id, s.DataSource.Attributes, s.RootOp)
+	if s.DataSource.isConst {
+		_, err = p.ConstRun(s.DataSource.Bat, s.Proc)
 	} else {
-		id := uint64(0)
-		if s.DataSource.TableDef != nil {
-			id = s.DataSource.TableDef.TblId
-		}
-		p = pipeline.New(id, s.DataSource.Attributes, s.RootOp)
-		if s.DataSource.isConst {
-			_, err = p.ConstRun(s.DataSource.Bat, s.Proc)
-		} else {
-			if s.DataSource.R == nil {
-				s.NodeInfo.Data = engine.BuildEmptyRelData()
-				readers, _, err := s.buildReaders(c, 1)
-				if err != nil {
-					return err
-				}
-				s.DataSource.R = readers[0]
+		if s.DataSource.R == nil {
+			s.NodeInfo.Data = engine.BuildEmptyRelData()
+			readers, _, err := s.buildReaders(c, 1)
+			if err != nil {
+				return err
 			}
+			s.DataSource.R = readers[0]
+		}
 
-			var tag int32
-			if s.DataSource.node != nil && len(s.DataSource.node.RecvMsgList) > 0 {
-				tag = s.DataSource.node.RecvMsgList[0].MsgTag
-			}
-			_, err = p.Run(s.DataSource.R, tag, s.Proc)
+		var tag int32
+		if s.DataSource.node != nil && len(s.DataSource.node.RecvMsgList) > 0 {
+			tag = s.DataSource.node.RecvMsgList[0].MsgTag
 		}
+		_, err = p.Run(s.DataSource.R, tag, s.Proc)
 	}
 
 	select {
@@ -303,8 +298,21 @@ func (s *Scope) MergeRun(c *Compile) error {
 		}
 	}()
 
-	if err := s.Run(c); err != nil {
-		return err
+	if s.DataSource != nil {
+		if err := s.Run(c); err != nil {
+			return err
+		}
+	} else {
+		p := pipeline.NewMerge(s.RootOp)
+		if _, err := p.MergeRun(s.Proc); err != nil {
+			select {
+			case <-s.Proc.Ctx.Done():
+			default:
+				p.Cleanup(s.Proc, true, c.isPrepare, err)
+				return err
+			}
+		}
+		p.Cleanup(s.Proc, false, c.isPrepare, nil)
 	}
 
 	// receive and check error from pre-scopes and remote scopes.
