@@ -303,15 +303,9 @@ func (s *Scope) MergeRun(c *Compile) error {
 		}
 	}()
 
-	if s.Magic != Normal && s.DataSource != nil {
-		s.Magic = Normal
-		if err := s.ParallelRun(c); err != nil {
-			return err
-		}
-	} else {
-		if err := s.Run(c); err != nil {
-			return err
-		}
+	s.Magic = Normal
+	if err := s.ParallelRun(c); err != nil {
+		return err
 	}
 
 	// receive and check error from pre-scopes and remote scopes.
