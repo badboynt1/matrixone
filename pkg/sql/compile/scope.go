@@ -396,6 +396,7 @@ func (s *Scope) ParallelRun(c *Compile) (err error) {
 		}
 	}()
 
+	_, isTableScan := vm.GetLeafOp(s.RootOp).(*table_scan.TableScan)
 	switch {
 	// probability 1: it's a JOIN pipeline.
 	case s.IsJoin:
@@ -407,7 +408,7 @@ func (s *Scope) ParallelRun(c *Compile) (err error) {
 		parallelScope, err = buildLoadParallelRun(s, c)
 
 	// probability 3: it's a SCAN pipeline.
-	case s.DataSource != nil:
+	case isTableScan:
 		parallelScope, err = buildScanParallelRun(s, c)
 
 	// others.
