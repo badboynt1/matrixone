@@ -2199,6 +2199,7 @@ func (c *Compile) compileJoin(node, left, right *plan.Node, probeScopes, buildSc
 		//construct join build operator for tp join
 		buildScopes[0].setRootOperator(constructJoinBuildOperator(c, rs[0].RootOp, false, 1))
 		buildScopes[0].IsEnd = true
+		rs[0].Magic = Merge
 	}
 	return rs
 }
