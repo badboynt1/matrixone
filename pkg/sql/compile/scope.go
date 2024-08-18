@@ -302,9 +302,15 @@ func (s *Scope) MergeRun(c *Compile) error {
 		}
 	}()
 
-	s.Magic = Normal
-	if err := s.ParallelRun(c); err != nil {
-		return err
+	switch s.Magic {
+	case Merge, Remote, Parallel:
+		if err := s.ParallelRun(c); err != nil {
+			return err
+		}
+	default:
+		if err := s.Run(c); err != nil {
+			return err
+		}
 	}
 
 	// receive and check error from pre-scopes and remote scopes.
@@ -346,7 +352,7 @@ func (s *Scope) MergeRun(c *Compile) error {
 // RemoteRun send the scope to a remote node for execution.
 func (s *Scope) RemoteRun(c *Compile) error {
 	if !s.canRemote(c, true) {
-		return s.ParallelRun(c)
+		return s.MergeRun(c)
 	}
 
 	runtime.ServiceRuntime(s.Proc.GetService()).Logger().
@@ -414,20 +420,14 @@ func (s *Scope) ParallelRun(c *Compile) (err error) {
 	default:
 		parallelScope, err = s, nil
 	}
-
 	if err != nil {
 		return err
 	}
-
 	if parallelScope != s {
 		setContextForParallelScope(parallelScope, s.Proc.Ctx, s.Proc.Cancel)
+		return parallelScope.MergeRun(c)
 	}
-
-	if parallelScope.Magic == Normal {
-		return parallelScope.Run(c)
-	}
-	parallelScope.Magic = Normal
-	return parallelScope.MergeRun(c)
+	return parallelScope.Run(c)
 }
 
 // buildJoinParallelRun deal one case of scope.ParallelRun.
@@ -452,15 +452,11 @@ func buildJoinParallelRun(s *Scope, c *Compile) (*Scope, error) {
 
 	isRight := s.isRight()
 
-	chp := s.PreScopes
-	for i := range chp {
-		chp[i].IsEnd = true
-	}
-
 	ss := make([]*Scope, mcpu)
 	for i := 0; i < mcpu; i++ {
-		ss[i] = newScope(Merge)
+		ss[i] = newScope(Normal)
 		ss[i].NodeInfo = s.NodeInfo
+		ss[i].NodeInfo.Mcpu = 1
 		ss[i].Proc = s.Proc.NewContextChildProc(1)
 	}
 	probeScope, buildScope := c.newBroadcastJoinProbeScope(s, ss), c.newJoinBuildScope(s, int32(mcpu))
@@ -499,7 +495,7 @@ func buildJoinParallelRun(s *Scope, c *Compile) (*Scope, error) {
 			}
 		}
 	}
-	ns.PreScopes = append(ns.PreScopes, chp...)
+
 	ns.PreScopes = append(ns.PreScopes, buildScope)
 	ns.PreScopes = append(ns.PreScopes, probeScope)
 
@@ -514,6 +510,7 @@ func buildLoadParallelRun(s *Scope, c *Compile) (*Scope, error) {
 	for i := 0; i < mcpu; i++ {
 		ss[i] = newScope(Normal)
 		ss[i].NodeInfo = s.NodeInfo
+		ss[i].NodeInfo.Mcpu = 1
 		ss[i].DataSource = &Source{
 			isConst: true,
 		}
