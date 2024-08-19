@@ -193,15 +193,8 @@ func (s *Scope) Run(c *Compile) (err error) {
 			_, err = p.ConstRun(s.DataSource.Bat, s.Proc)
 		} else {
 			if s.DataSource.R == nil {
-				s.NodeInfo.Data = engine.BuildEmptyRelData()
-				readers, _, err := s.buildReaders(c, 1)
-				if err != nil {
-					return err
-				}
-				s.DataSource.R = readers[0]
-				s.DataSource.R.SetOrderBy(s.DataSource.OrderBy)
+				panic("reader should not be nil!")
 			}
-
 			var tag int32
 			if s.DataSource.node != nil && len(s.DataSource.node.RecvMsgList) > 0 {
 				tag = s.DataSource.node.RecvMsgList[0].MsgTag
