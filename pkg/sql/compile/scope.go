@@ -180,6 +180,8 @@ func (s *Scope) Run(c *Compile) (err error) {
 		}
 	}()
 
+	fmt.Println("scope run !!!!!!!!!!", DebugShowScopes([]*Scope{s}, OldLevel))
+
 	if s.DataSource == nil {
 		p = pipeline.NewMerge(s.RootOp)
 		_, err = p.MergeRun(s.Proc)
@@ -249,6 +251,8 @@ func (s *Scope) SetOperatorInfoRecursively(cb func() int32) {
 // MergeRun range and run the scope's pre-scopes by go-routine, and finally run itself to do merge work.
 func (s *Scope) MergeRun(c *Compile) error {
 	var wg sync.WaitGroup
+
+	fmt.Println("merge run !!!!!!!!!!", DebugShowScopes([]*Scope{s}, OldLevel))
 
 	preScopeResultReceiveChan := make(chan error, len(s.PreScopes))
 	for i := range s.PreScopes {
@@ -354,6 +358,7 @@ func (s *Scope) MergeRun(c *Compile) error {
 
 // RemoteRun send the scope to a remote node for execution.
 func (s *Scope) RemoteRun(c *Compile) error {
+	fmt.Println("remote run !!!!!!!!!!", DebugShowScopes([]*Scope{s}, OldLevel))
 	if !s.canRemote(c, true) {
 		if len(s.PreScopes) > 0 {
 			return s.MergeRun(c)
@@ -437,7 +442,7 @@ func (s *Scope) ParallelRun(c *Compile) (err error) {
 		setContextForParallelScope(parallelScope, s.Proc.Ctx, s.Proc.Cancel)
 	}
 
-	if parallelScope.Magic == Normal {
+	if parallelScope.Magic == Normal || len(parallelScope.PreScopes) == 0 {
 		return parallelScope.Run(c)
 	}
 	parallelScope.Magic = Normal
@@ -466,15 +471,15 @@ func buildJoinParallelRun(s *Scope, c *Compile) (*Scope, error) {
 
 	isRight := s.isRight()
 
-	chp := s.PreScopes
-	for i := range chp {
-		chp[i].IsEnd = true
+	for i := range s.PreScopes {
+		s.PreScopes[i].IsEnd = true
 	}
 
 	ss := make([]*Scope, mcpu)
 	for i := 0; i < mcpu; i++ {
-		ss[i] = newScope(Merge)
+		ss[i] = newScope(Normal)
 		ss[i].NodeInfo = s.NodeInfo
+		ss[i].NodeInfo.Mcpu = 1
 		ss[i].Proc = s.Proc.NewContextChildProc(1)
 	}
 	probeScope, buildScope := c.newBroadcastJoinProbeScope(s, ss), c.newJoinBuildScope(s, int32(mcpu))
@@ -513,7 +518,7 @@ func buildJoinParallelRun(s *Scope, c *Compile) (*Scope, error) {
 			}
 		}
 	}
-	ns.PreScopes = append(ns.PreScopes, chp...)
+
 	ns.PreScopes = append(ns.PreScopes, buildScope)
 	ns.PreScopes = append(ns.PreScopes, probeScope)
 

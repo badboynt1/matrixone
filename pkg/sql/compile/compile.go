@@ -3582,7 +3582,7 @@ func (c *Compile) newShuffleJoinScopeList(left, right []*Scope, n *plan.Node) []
 }
 
 func (c *Compile) newBroadcastJoinProbeScope(s *Scope, ss []*Scope) *Scope {
-	rs := newScope(Merge)
+	rs := newScope(Normal)
 	mergeOp := merge.NewArgument()
 	mergeOp.SetIdx(vm.GetLeafOp(s.RootOp).GetOperatorBase().GetIdx())
 	mergeOp.SetIsFirst(true)
@@ -3598,7 +3598,7 @@ func (c *Compile) newBroadcastJoinProbeScope(s *Scope, ss []*Scope) *Scope {
 }
 
 func (c *Compile) newJoinBuildScope(s *Scope, mcpu int32) *Scope {
-	rs := newScope(Merge)
+	rs := newScope(Normal)
 	buildLen := len(s.Proc.Reg.MergeReceivers) - s.BuildIdx
 	rs.Proc = s.Proc.NewContextChildProc(buildLen)
 	for i := 0; i < buildLen; i++ {
