@@ -40,7 +40,6 @@ func sendToAllLocalFunc(bat *batch.Batch, ap *Dispatch, proc *process.Process) (
 			}
 			return false, err
 		}
-		tmp.Aggs = bat.Aggs
 		bats = append(bats, tmp)
 	}
 
