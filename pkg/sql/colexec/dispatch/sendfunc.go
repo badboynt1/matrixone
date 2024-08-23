@@ -31,14 +31,17 @@ import (
 
 // common sender: send to all LocalReceiver
 func sendToAllLocalFunc(bat *batch.Batch, ap *Dispatch, proc *process.Process) (bool, error) {
-	var err error
 	var bats []*batch.Batch
-	for k := 1; k < len(ap.LocalRegs)+1; k++ {
-		bat, err = bat.Dup(proc.Mp())
+	for k := 0; k < len(ap.LocalRegs); k++ {
+		tmp, err := bat.Dup(proc.Mp())
 		if err != nil {
+			for j := range bats {
+				bats[j].Clean(proc.Mp())
+			}
 			return false, err
 		}
-		bats = append(bats, bat)
+		tmp.Aggs = bat.Aggs
+		bats = append(bats, tmp)
 	}
 
 	for i, reg := range ap.LocalRegs {
@@ -51,6 +54,7 @@ func sendToAllLocalFunc(bat *batch.Batch, ap *Dispatch, proc *process.Process) (
 
 		case <-reg.Ctx.Done():
 			if ap.IsSink {
+				bats[i].Clean(proc.Mp())
 				continue
 			}
 			for j := range bats {

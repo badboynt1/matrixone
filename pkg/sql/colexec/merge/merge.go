@@ -68,7 +68,6 @@ func (merge *Merge) Call(proc *process.Process) (vm.CallResult, error) {
 		}
 		if merge.ctr.buf != nil {
 			proc.PutBatch(merge.ctr.buf)
-			merge.ctr.buf = nil
 		}
 		merge.ctr.buf = msg.Batch
 		result.Batch = merge.ctr.buf
