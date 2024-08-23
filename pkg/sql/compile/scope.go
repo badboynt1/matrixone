@@ -355,7 +355,11 @@ func (s *Scope) MergeRun(c *Compile) error {
 // RemoteRun send the scope to a remote node for execution.
 func (s *Scope) RemoteRun(c *Compile) error {
 	if !s.canRemote(c, true) {
-		return s.MergeRun(c)
+		if len(s.PreScopes) > 0 {
+			return s.MergeRun(c)
+		} else {
+			return s.ParallelRun(c)
+		}
 	}
 
 	runtime.ServiceRuntime(s.Proc.GetService()).Logger().
@@ -409,7 +413,7 @@ func (s *Scope) ParallelRun(c *Compile) (err error) {
 	// probability 1: it's a JOIN pipeline.
 	case s.IsJoin:
 		parallelScope, err = buildJoinParallelRun(s, c)
-		//fmt.Println(DebugShowScopes([]*Scope{parallelScope}))
+		//fmt.Println("after parallel" + DebugShowScopes([]*Scope{parallelScope}, OldLevel))
 
 	// probability 2: it's a LOAD pipeline.
 	case s.IsLoad:
@@ -418,6 +422,7 @@ func (s *Scope) ParallelRun(c *Compile) (err error) {
 	// probability 3: it's a SCAN pipeline.
 	case isTableScan:
 		parallelScope, err = buildScanParallelRun(s, c)
+		//fmt.Println("after parallel" + DebugShowScopes([]*Scope{parallelScope}, OldLevel))
 
 	// others.
 	default:
