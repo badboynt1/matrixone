@@ -302,7 +302,7 @@ func (s *Scope) MergeRun(c *Compile) error {
 		}
 	}()
 
-	if s.Magic != Normal && s.DataSource != nil {
+	if s.Magic != Normal {
 		magic := s.Magic
 		s.Magic = Normal
 		err := s.ParallelRun(c)
@@ -355,7 +355,7 @@ func (s *Scope) MergeRun(c *Compile) error {
 // RemoteRun send the scope to a remote node for execution.
 func (s *Scope) RemoteRun(c *Compile) error {
 	if !s.canRemote(c, true) {
-		return s.ParallelRun(c)
+		return s.MergeRun(c)
 	}
 
 	runtime.ServiceRuntime(s.Proc.GetService()).Logger().
