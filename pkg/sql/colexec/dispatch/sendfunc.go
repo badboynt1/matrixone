@@ -50,6 +50,9 @@ func sendToAllLocalFunc(bat *batch.Batch, ap *Dispatch, proc *process.Process) (
 			return true, nil
 
 		case <-reg.Ctx.Done():
+			if ap.IsSink {
+				continue
+			}
 			for j := range bats {
 				bats[j].Clean(proc.Mp())
 			}
