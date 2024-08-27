@@ -323,6 +323,10 @@ func (s *Scope) MergeRun(c *Compile) error {
 				return err
 			}
 		}
+	} else {
+		defer func() {
+			reuse.Free[Scope](s, nil)
+		}()
 	}
 
 	// receive and check error from pre-scopes and remote scopes.
