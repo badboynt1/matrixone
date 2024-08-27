@@ -475,13 +475,14 @@ func buildJoinParallelRun(s *Scope, c *Compile) (*Scope, error) {
 		chp[i].IsEnd = true
 	}
 
-	ms, ss := newParallelScope(s, c)
-	probeScope, buildScope := c.newBroadcastJoinProbeScope(s, ss), c.newJoinBuildScope(s, int32(mcpu))
+	buildScope := c.newJoinBuildScope(s, int32(mcpu))
+	s, ss := newParallelScope(s, c)
+	probeScope := c.newBroadcastJoinProbeScope(s, ss)
 
 	if isRight {
 		channel := make(chan *bitmap.Bitmap, mcpu)
-		for i := range ms.PreScopes {
-			switch arg := vm.GetLeafOpParent(nil, ms.PreScopes[i].RootOp).(type) {
+		for i := range ss {
+			switch arg := vm.GetLeafOpParent(nil, ss[i].RootOp).(type) {
 			case *right.RightJoin:
 				arg.Channel = channel
 				arg.NumCPU = uint64(mcpu)
@@ -505,11 +506,11 @@ func buildJoinParallelRun(s *Scope, c *Compile) (*Scope, error) {
 			}
 		}
 	}
-	ms.PreScopes = append(ms.PreScopes, chp...)
-	ms.PreScopes = append(ms.PreScopes, buildScope)
-	ms.PreScopes = append(ms.PreScopes, probeScope)
+	s.PreScopes = append(s.PreScopes, chp...)
+	s.PreScopes = append(s.PreScopes, buildScope)
+	s.PreScopes = append(s.PreScopes, probeScope)
 
-	return ms, nil
+	return s, nil
 }
 
 // buildLoadParallelRun deal one case of scope.ParallelRun.
@@ -709,15 +710,20 @@ func newParallelScope1(s *Scope, c *Compile) (*Scope, []*Scope) {
 		parallelScopes[i].NodeInfo.Mcpu = 1
 		parallelScopes[i].Proc = s.Proc.NewContextChildProc(lenChannels)
 		parallelScopes[i].TxnOffset = s.TxnOffset
-		parallelScopes[i].setRootOperator(dupOperatorRecursively(s.RootOp, i, s.NodeInfo.Mcpu))
+		if i == 0 {
+			parallelScopes[i].setRootOperator(s.RootOp)
+		} else {
+			parallelScopes[i].setRootOperator(dupOperatorRecursively(s.RootOp, i, s.NodeInfo.Mcpu))
+		}
 
 		connArg := connector.NewArgument().WithReg(rs.Proc.Reg.MergeReceivers[0])
 		parallelScopes[i].setRootOperator(connArg)
 	}
 
 	rs.PreScopes = parallelScopes
-	s.PreScopes = nil
-	c.tmpScopes = append(c.tmpScopes, rs)
+	s.PreScopes = []*Scope{rs}
+	s.NodeInfo.Mcpu = 1
+	s.RootOp = nil
 	return rs, parallelScopes
 }
 
@@ -746,16 +752,18 @@ func newParallelScope(s *Scope, c *Compile) (*Scope, []*Scope) {
 		parallelScopes[i].NodeInfo.Mcpu = 1
 		parallelScopes[i].Proc = s.Proc.NewContextChildProc(lenChannels)
 		parallelScopes[i].TxnOffset = s.TxnOffset
-		parallelScopes[i].setRootOperator(dupOperatorRecursively(s.RootOp, i, s.NodeInfo.Mcpu))
+		if i == 0 {
+			parallelScopes[i].setRootOperator(s.RootOp)
+		} else {
+			parallelScopes[i].setRootOperator(dupOperatorRecursively(s.RootOp, i, s.NodeInfo.Mcpu))
+		}
 	}
 
 	// fake scope is used to merge parallel scopes, and do nothing itself
-	rs := newScope(Merge)
-	rs.Proc = s.Proc
-	rs.PreScopes = parallelScopes
-	s.PreScopes = nil
-	c.tmpScopes = append(c.tmpScopes, rs)
-	return rs, parallelScopes
+	s.PreScopes = parallelScopes
+	s.NodeInfo.Mcpu = 1
+	s.RootOp = nil
+	return s, parallelScopes
 }
 
 func (s *Scope) doSetRootOperator(op vm.Operator) {
