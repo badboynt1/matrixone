@@ -1125,7 +1125,7 @@ func calcScanStats(node *plan.Node, builder *QueryBuilder) *plan.Stats {
 		return DefaultStats()
 	}
 	if InternalTable(node.TableDef) {
-		return DefaultStats()
+		return DefaultHugeStats()
 	}
 	if shouldReturnMinimalStats(node) {
 		return DefaultMinimalStats()
