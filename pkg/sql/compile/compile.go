@@ -3313,6 +3313,9 @@ func (c *Compile) newEmptyMergeScope() *Scope {
 }
 
 func (c *Compile) newMergeScope(ss []*Scope) *Scope {
+	if c.IsSingleScope(ss) {
+		return ss[0]
+	}
 	rs := c.newEmptyMergeScope()
 	rs.PreScopes = ss
 
@@ -3353,6 +3356,9 @@ func (c *Compile) newScopeListOnCurrentCN(childrenCount int, blocks int) []*Scop
 
 // all scopes in ss are on the same CN
 func (c *Compile) newMergeScopeByCN(ss []*Scope, nodeinfo engine.Node) *Scope {
+	if c.IsSingleScope(ss) {
+		return ss[0]
+	}
 	rs := newScope(Remote)
 	rs.NodeInfo.Addr = nodeinfo.Addr
 	rs.NodeInfo.Mcpu = 1 // merge scope is single parallel by default
