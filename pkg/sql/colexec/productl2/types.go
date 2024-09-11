@@ -18,7 +18,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/common/mpool"
 	"github.com/matrixorigin/matrixone/pkg/common/reuse"
 	"github.com/matrixorigin/matrixone/pkg/container/batch"
-	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
 	"github.com/matrixorigin/matrixone/pkg/sql/colexec"
 	"github.com/matrixorigin/matrixone/pkg/vm"
@@ -34,12 +33,11 @@ const (
 )
 
 type container struct {
-	state          int
-	probeIdx       int
-	bat            *batch.Batch // build batch
-	rbat           *batch.Batch
-	inBat          *batch.Batch // probe batch
-	intputbatchcnt int32
+	state    int
+	probeIdx int
+	bat      *batch.Batch // build batch
+	rbat     *batch.Batch
+	inBat    *batch.Batch // probe batch
 }
 
 type Productl2 struct {
@@ -84,8 +82,6 @@ func (productl2 *Productl2) Release() {
 }
 
 func (productl2 *Productl2) Reset(proc *process.Process, pipelineFailed bool, err error) {
-	logutil.Infof("product l2 get %v batches", productl2.ctr.intputbatchcnt)
-	productl2.ctr.intputbatchcnt = 0
 	if productl2.ctr.bat != nil {
 		productl2.ctr.bat.CleanOnlyData()
 	}
