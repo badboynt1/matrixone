@@ -2041,7 +2041,7 @@ func (c *Compile) compileUnion(n *plan.Node, left []*Scope, right []*Scope) []*S
 }
 
 func (c *Compile) compileTpMinusAndIntersect(left []*Scope, right []*Scope, nodeType plan.Node_NodeType) []*Scope {
-	rs := c.newScopeListOnCurrentCN(2, 1)
+	rs := c.newScopeListOnCurrentCN(2, nil)
 	rs[0].PreScopes = append(rs[0].PreScopes, left[0], right[0])
 
 	connectLeftArg := connector.NewArgument().WithReg(rs[0].Proc.Reg.MergeReceivers[0])
@@ -2082,7 +2082,7 @@ func (c *Compile) compileMinusAndIntersect(n *plan.Node, left []*Scope, right []
 	if c.IsSingleScope(left) && c.IsSingleScope(right) {
 		return c.compileTpMinusAndIntersect(left, right, nodeType)
 	}
-	rs := c.newScopeListOnCurrentCN(2, int(n.Stats.BlockNum))
+	rs := c.newScopeListOnCurrentCN(2, n)
 	rs = c.newScopeListForMinusAndIntersect(rs, left, right, n)
 
 	currentFirstFlag := c.anal.isFirst
@@ -3379,9 +3379,9 @@ func (c *Compile) newMergeScope(ss []*Scope) *Scope {
 // newScopeListOnCurrentCN traverse the cnList and only generate Scope list for the current CN node
 // waing: newScopeListOnCurrentCN result is only used to build Scope and add one merge operator.
 // If other operators are added, please let @qingxinhome know
-func (c *Compile) newScopeListOnCurrentCN(childrenCount int, blocks int) []*Scope {
+func (c *Compile) newScopeListOnCurrentCN(childrenCount int, n *plan.Node) []*Scope {
 	node := getEngineNode(c)
-	mcpu := c.generateCPUNumber(node.Mcpu, blocks)
+	mcpu := c.generateCPUNumber(int32(node.Mcpu), n)
 	ss := c.newScopeListWithNode(mcpu, childrenCount, node.Addr)
 	return ss
 }
@@ -3586,15 +3586,22 @@ func (c *Compile) newShuffleJoinScopeList(probeScopes, buildScopes []*Scope, n *
 	return shuffleJoins
 }
 
-func (c *Compile) generateCPUNumber(cpunum, blocks int) int {
-	if cpunum <= 0 || blocks <= 16 || c.IsTpQuery() {
+func (c *Compile) generateCPUNumber(maxcpunum int32, node *plan.Node) int {
+	if node == nil || node.Stats == nil {
+		return 1
+	}
+	blocks := node.Stats.BlockNum
+	if plan2.ContainsVectorType(node.TableDef) {
+		blocks = blocks * 8 // for vector type, need to increase degree of parallelism
+	}
+	if maxcpunum <= 0 || blocks <= 16 || c.IsTpQuery() {
 		return 1
 	}
 	ret := blocks/16 + 1
-	if ret < cpunum {
-		return ret
+	if ret < maxcpunum {
+		return int(ret)
 	}
-	return cpunum
+	return int(maxcpunum)
 }
 
 func (c *Compile) determinExpandRanges(n *plan.Node) bool {
@@ -3877,7 +3884,7 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, []any, []types.T, e
 		// add current CN
 		nodes = append(nodes, engine.Node{
 			Addr: c.addr,
-			Mcpu: c.generateCPUNumber(ncpu, int(n.Stats.BlockNum)),
+			Mcpu: c.generateCPUNumber(int32(ncpu), n),
 		})
 		nodes[0].NeedExpandRanges = true
 		return nodes, nil, nil, nil
@@ -3940,7 +3947,7 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, []any, []types.T, e
 			nodes[i] = engine.Node{
 				Id:   node.Id,
 				Addr: node.Addr,
-				Mcpu: c.generateCPUNumber(node.Mcpu, int(n.Stats.BlockNum)),
+				Mcpu: c.generateCPUNumber(int32(node.Mcpu), n),
 				Data: engine.BuildEmptyRelData(),
 			}
 		}
@@ -4303,7 +4310,7 @@ func putBlocksInAverage(c *Compile, relData engine.RelData, n *plan.Node) engine
 				if len(nodes) == 0 {
 					nodes = append(nodes, engine.Node{
 						Addr: c.addr,
-						Mcpu: c.generateCPUNumber(ncpu, int(n.Stats.BlockNum)),
+						Mcpu: c.generateCPUNumber(int32(ncpu), n),
 						Data: relData.BuildEmptyRelData(),
 					})
 				}
@@ -4319,7 +4326,7 @@ func putBlocksInAverage(c *Compile, relData engine.RelData, n *plan.Node) engine
 				node := engine.Node{
 					Id:   c.cnList[j].Id,
 					Addr: c.cnList[j].Addr,
-					Mcpu: c.generateCPUNumber(c.cnList[j].Mcpu, int(n.Stats.BlockNum)),
+					Mcpu: c.generateCPUNumber(int32(c.cnList[j].Mcpu), n),
 					Data: relData.BuildEmptyRelData(),
 				}
 
@@ -4336,7 +4343,7 @@ func putBlocksInAverage(c *Compile, relData engine.RelData, n *plan.Node) engine
 				if len(nodes) == 0 {
 					nodes = append(nodes, engine.Node{
 						Addr: c.addr,
-						Mcpu: c.generateCPUNumber(ncpu, int(n.Stats.BlockNum)),
+						Mcpu: c.generateCPUNumber(int32(ncpu), n),
 						Data: relData.BuildEmptyRelData(),
 					})
 				}
@@ -4352,7 +4359,7 @@ func putBlocksInAverage(c *Compile, relData engine.RelData, n *plan.Node) engine
 				node := engine.Node{
 					Id:   c.cnList[j].Id,
 					Addr: c.cnList[j].Addr,
-					Mcpu: c.generateCPUNumber(c.cnList[j].Mcpu, int(n.Stats.BlockNum)),
+					Mcpu: c.generateCPUNumber(int32(c.cnList[j].Mcpu), n),
 					Data: relData.BuildEmptyRelData(),
 				}
 
@@ -4418,7 +4425,7 @@ func shuffleBlocksToMultiCN(c *Compile, rel engine.Relation, relData engine.RelD
 	// add current CN
 	nodes = append(nodes, engine.Node{
 		Addr: c.addr,
-		Mcpu: c.generateCPUNumber(ncpu, int(n.Stats.BlockNum)),
+		Mcpu: c.generateCPUNumber(int32(ncpu), n),
 	})
 	// add memory table block
 	nodes[0].Data = relData.BuildEmptyRelData()
@@ -4444,7 +4451,7 @@ func shuffleBlocksToMultiCN(c *Compile, rel engine.Relation, relData engine.RelD
 			nodes = append(nodes, engine.Node{
 				Id:   c.cnList[i].Id,
 				Addr: c.cnList[i].Addr,
-				Mcpu: c.generateCPUNumber(c.cnList[i].Mcpu, int(n.Stats.BlockNum)),
+				Mcpu: c.generateCPUNumber(int32(c.cnList[i].Mcpu), n),
 				Data: relData.BuildEmptyRelData(),
 			})
 		}
@@ -4603,7 +4610,7 @@ func putBlocksInCurrentCN(c *Compile, relData engine.RelData, n *plan.Node) engi
 	// add current CN
 	nodes = append(nodes, engine.Node{
 		Addr: c.addr,
-		Mcpu: c.generateCPUNumber(ncpu, int(n.Stats.BlockNum)),
+		Mcpu: c.generateCPUNumber(int32(ncpu), n),
 	})
 	nodes[0].Data = relData
 	return nodes

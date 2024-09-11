@@ -2334,3 +2334,15 @@ func Find[T ~string | ~int, S any](data map[T]S, val T) bool {
 	}
 	return false
 }
+
+func ContainsVectorType(tableDef *plan.TableDef) bool {
+	if tableDef == nil {
+		return false
+	}
+	for i := range tableDef.Cols {
+		if tableDef.Cols[i].Typ.Id == int32(types.T_array_float32) || tableDef.Cols[i].Typ.Id == int32(types.T_array_float64) {
+			return true
+		}
+	}
+	return false
+}
