@@ -2299,6 +2299,10 @@ func (c *Compile) compileProbeSideForBoradcastJoin(node, left, right *plan.Node,
 			op := constructProductL2(node, rightTyps, c.proc)
 			op.SetAnalyzeControl(c.anal.curNodeIdx, currentFirstFlag)
 			rs[i].setRootOperator(op)
+			// need to increase dop for l2 join
+			if rs[i].NodeInfo.Mcpu != 1 {
+				rs[i].NodeInfo.Mcpu = ncpu
+			}
 		}
 		c.anal.isFirst = false
 	case plan.Node_INDEX:
