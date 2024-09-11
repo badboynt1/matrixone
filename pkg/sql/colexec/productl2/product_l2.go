@@ -84,7 +84,7 @@ func (productl2 *Productl2) Call(proc *process.Process) (vm.CallResult, error) {
 					continue
 				}
 			}
-
+			ctr.intputbatchcnt++
 			if err = productl2.build(proc, analyzer); err != nil {
 				return result, err
 			}
@@ -111,6 +111,7 @@ func (productl2 *Productl2) Call(proc *process.Process) (vm.CallResult, error) {
 					continue
 				}
 			}
+			ctr.intputbatchcnt++
 
 			if ctr.rbat == nil {
 				ctr.rbat = batch.NewWithSize(len(productl2.Result))
