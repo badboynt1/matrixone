@@ -1197,7 +1197,7 @@ func calcScanStats(node *plan.Node, builder *QueryBuilder) *plan.Stats {
 	}
 
 	if ContainsVectorType(node.TableDef) {
-		stats.Cost = stats.Cost * 8 // for vector type, need to increase cost
+		stats.Cost = stats.Cost * 4 // for vector type, need to increase cost
 	}
 	return stats
 }

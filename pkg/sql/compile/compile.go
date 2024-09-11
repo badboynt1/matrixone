@@ -3592,7 +3592,7 @@ func (c *Compile) generateCPUNumber(maxcpunum int32, node *plan.Node) int {
 	}
 	blocks := node.Stats.BlockNum
 	if plan2.ContainsVectorType(node.TableDef) {
-		blocks = blocks * 8 // for vector type, need to increase degree of parallelism
+		blocks = blocks * 4 // for vector type, need to increase degree of parallelism
 	}
 	if maxcpunum <= 0 || blocks <= 16 || c.IsTpQuery() {
 		return 1
