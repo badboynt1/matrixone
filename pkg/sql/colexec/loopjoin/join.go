@@ -90,6 +90,22 @@ func (loopJoin *LoopJoin) Call(proc *process.Process) (vm.CallResult, error) {
 	for {
 		switch ctr.state {
 		case Build:
+			if ctr.inbat == nil { //get one batch from left before receive from build
+				result, err = vm.ChildrenCall(loopJoin.GetChildren(0), proc, analyzer)
+				if err != nil {
+					return result, err
+				}
+				ctr.inbat = result.Batch
+				if ctr.inbat == nil {
+					ctr.state = End
+					continue
+				}
+				if ctr.inbat.IsEmpty() {
+					ctr.inbat = nil
+					continue
+				}
+			}
+
 			if err = loopJoin.build(proc, analyzer); err != nil {
 				return result, err
 			}
