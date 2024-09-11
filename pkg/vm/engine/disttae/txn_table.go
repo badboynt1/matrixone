@@ -1727,6 +1727,7 @@ func (tbl *txnTable) BuildReaders(
 	def := tbl.GetTableDef(ctx)
 	mod := blkCnt % newNum
 	divide := blkCnt / newNum
+	logutil.Infof("!!!!!!!!!!!!!!!tablename %v blockcnt %v mod %v divide %v", tbl.tableDef.Name, blkCnt, mod, divide)
 	var shard engine.RelData
 	for i := 0; i < newNum; i++ {
 		if i == 0 {
