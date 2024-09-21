@@ -238,7 +238,7 @@ func NewReader(
 	tableDef *plan.TableDef,
 	ts timestamp.Timestamp,
 	expr *plan.Expr,
-//orderedScan bool, // it should be included in filter or expr.
+	//orderedScan bool, // it should be included in filter or expr.
 	source engine.DataSource,
 ) (*reader, error) {
 
