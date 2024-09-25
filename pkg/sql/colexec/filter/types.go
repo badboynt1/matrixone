@@ -60,6 +60,9 @@ func NewArgument() *Filter {
 
 func (filter *Filter) Release() {
 	if filter != nil {
+		if len(filter.ctr.runtimeExecutors) > 0 {
+			panic("debug here")
+		}
 		filter.ctr.cleanRuntimeExecutor()
 		reuse.Free[Filter](filter, nil)
 	}
