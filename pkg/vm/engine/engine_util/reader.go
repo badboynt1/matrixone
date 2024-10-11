@@ -443,9 +443,6 @@ func (r *reader) Read(
 	}
 
 	var policy fileservice.Policy
-	if r.scanType == LARGE || r.scanType == NORMAL {
-		policy = fileservice.SkipMemoryCacheWrites
-	}
 
 	if r.cacheBatch == nil {
 		cacheBatch := batch.EmptyBatchWithSize(len(r.columns.seqnums) + 1)
