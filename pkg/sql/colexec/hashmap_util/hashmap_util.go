@@ -233,7 +233,7 @@ func (hb *HashmapBuilder) BuildHashmap(hashOnPK bool, needAllocateSels bool, nee
 		}
 	} else {
 		if needAllocateSels {
-			hb.MultiSels = make([][]int32, 0, 4)
+			hb.MultiSels = make([][]int32, 0, hb.InputBatchRowCount/4)
 		}
 	}
 
