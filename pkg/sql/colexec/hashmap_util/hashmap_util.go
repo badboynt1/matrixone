@@ -295,7 +295,8 @@ func (hb *HashmapBuilder) BuildHashmap(hashOnPK bool, needAllocateSels bool, nee
 					if diff > 1 {
 						panic("error happend when build hashmap!")
 					}
-					hb.MultiSels = append(hb.MultiSels, make([]int32, 0, 4))
+					s := make([]int32, 0, 1)
+					hb.MultiSels = append(hb.MultiSels, s)
 				}
 				hb.MultiSels[ai] = append(hb.MultiSels[ai], int32(i+k))
 			}
