@@ -233,7 +233,7 @@ func (hb *HashmapBuilder) BuildHashmap(hashOnPK bool, needAllocateSels bool, nee
 		}
 	} else {
 		if needAllocateSels {
-			hb.MultiSels = make([][]int32, hb.InputBatchRowCount)
+			hb.MultiSels = make([][]int32, 0, 4)
 		}
 	}
 
@@ -290,8 +290,12 @@ func (hb *HashmapBuilder) BuildHashmap(hashOnPK bool, needAllocateSels bool, nee
 			ai := int64(v) - 1
 
 			if !hashOnPK && needAllocateSels {
-				if hb.MultiSels[ai] == nil {
-					hb.MultiSels[ai] = make([]int32, 0)
+				if len(hb.MultiSels) < int(v) {
+					diff := int(v) - len(hb.MultiSels)
+					if diff > 1 {
+						panic("error happend when build hashmap!")
+					}
+					hb.MultiSels = append(hb.MultiSels, make([]int32, 0, 4))
 				}
 				hb.MultiSels[ai] = append(hb.MultiSels[ai], int32(i+k))
 			}
