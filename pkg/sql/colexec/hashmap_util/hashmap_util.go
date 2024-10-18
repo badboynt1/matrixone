@@ -15,8 +15,9 @@
 package hashmap_util
 
 import (
-	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"runtime"
+
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 
 	"github.com/matrixorigin/matrixone/pkg/vm/message"
 
@@ -342,14 +343,14 @@ func (hb *HashmapBuilder) BuildHashmap(hashOnPK bool, needAllocateSels bool, nee
 		if hb.InputBatchRowCount == int(hb.IntHashMap.GroupCount()) {
 			hb.MultiSels.Free()
 			if !hashOnPK {
-				logutil.Infof("find hashonpk!")
+				logutil.Infof("find hashonpk rows %v!", hb.InputBatchRowCount)
 			}
 		}
 	} else {
 		if hb.InputBatchRowCount == int(hb.StrHashMap.GroupCount()) {
 			hb.MultiSels.Free()
 			if !hashOnPK {
-				logutil.Infof("find hashonpk!")
+				logutil.Infof("find hashonpk, rows %v!", hb.InputBatchRowCount)
 			}
 		}
 	}
