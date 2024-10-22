@@ -441,7 +441,7 @@ func (bat *Batch) String() string {
 }
 
 // DupWithoutData is  used to copy a Batch object without data
-// usually need to union data manually
+// usually need to union data after this manually
 func (bat *Batch) DupWithoutData() *Batch {
 	tmp := NewWithSize(len(bat.Vecs))
 	tmp.SetAttributes(bat.Attrs)
@@ -451,7 +451,7 @@ func (bat *Batch) DupWithoutData() *Batch {
 		tmp.Vecs[j] = vector.NewOffHeapVecWithType(typ)
 		tmp.Vecs[j].SetSorted(vec.GetSorted())
 	}
-	tmp.SetRowCount(bat.RowCount())
+	tmp.SetRowCount(0)
 	tmp.ShuffleIDX = bat.ShuffleIDX
 	return tmp
 }
