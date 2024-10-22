@@ -68,6 +68,7 @@ func (filter *Filter) Release() {
 
 type container struct {
 	buf              *batch.Batch
+	buf1             *batch.Batch //used only in shrinkWithBoolVector
 	executors        []colexec.ExpressionExecutor
 	bs               vector.FunctionParameterWrapper[bool]
 	runtimeExecutors []colexec.ExpressionExecutor
@@ -83,6 +84,12 @@ func (filter *Filter) SetRuntimeExpr(proc *process.Process, exes []*plan.Expr) (
 func (filter *Filter) Reset(proc *process.Process, pipelineFailed bool, err error) {
 	filter.ctr.resetExecutor()
 	filter.ctr.cleanRuntimeExecutor()
+	if filter.ctr.buf != nil {
+		filter.ctr.buf.CleanOnlyData()
+	}
+	if filter.ctr.buf1 != nil {
+		filter.ctr.buf1.CleanOnlyData()
+	}
 }
 
 func (filter *Filter) Free(proc *process.Process, pipelineFailed bool, err error) {
@@ -90,6 +97,9 @@ func (filter *Filter) Free(proc *process.Process, pipelineFailed bool, err error
 	filter.ctr.cleanRuntimeExecutor()
 	filter.ctr.allExecutors = nil
 	if filter.ctr.buf != nil {
+		filter.ctr.buf.Clean(proc.Mp())
+	}
+	if filter.ctr.buf1 != nil {
 		filter.ctr.buf.Clean(proc.Mp())
 	}
 }
