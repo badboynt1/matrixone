@@ -1629,7 +1629,6 @@ func (builder *QueryBuilder) createQuery() (*Query, error) {
 
 		determineHashOnPK(rootID, builder)
 		determineShuffleMethod(rootID, builder)
-		determineShuffleMethod2(rootID, -1, builder)
 		if builder.optimizerHints != nil && builder.optimizerHints.printShuffle == 1 && HasShuffleInPlan(builder.qry) {
 			logutil.Infof("has shuffle node in plan! sql: %v", builder.compCtx.GetRootSql())
 		}
