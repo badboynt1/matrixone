@@ -38,7 +38,7 @@ const (
 	threshHoldForHybirdShuffle      = 4000000
 	threshHoldForHashShuffle        = 2000000
 	ShuffleThreshHoldOfNDV          = 50000
-	ShuffleTypeThreshHoldLowerLimit = 16
+	ShuffleTypeThreshHoldLowerLimit = 64
 	ShuffleTypeThreshHoldUpperLimit = 1024
 
 	overlapThreshold = 0.95
@@ -347,7 +347,6 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 		rightchild := builder.qry.Nodes[n.Children[1]]
 		factor := math.Pow((leftchild.Stats.Outcnt / rightchild.Stats.Outcnt), 0.3)
 		if n.Stats.HashmapStats.HashmapSize < threshHoldForShuffleJoin*factor {
-			logutil.Infof("return 1 left %v right %v factor %v hashmapsize %v", leftchild.Stats.Outcnt, rightchild.Stats.Outcnt, factor, n.Stats.HashmapStats.HashmapSize)
 			return
 		}
 	}
@@ -355,7 +354,6 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 	//find the highest ndv
 	highestNDV := n.OnList[idx].Ndv
 	if highestNDV < ShuffleThreshHoldOfNDV {
-		logutil.Infof("return 2")
 		return
 	}
 
@@ -383,7 +381,6 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 		n.Stats.HashmapStats.Shuffle = true
 		determinShuffleType(hashCol0, n, builder)
 		if n.Stats.HashmapStats.ShuffleType == plan.ShuffleType_Hash && n.Stats.HashmapStats.HashmapSize < threshHoldForHashShuffle {
-			logutil.Infof("return 3")
 			n.Stats.HashmapStats.Shuffle = false
 		}
 	}
@@ -586,7 +583,6 @@ func determineShuffleMethod2(nodeID, parentID int32, builder *QueryBuilder) {
 			return
 		}
 		if node.Stats.HashmapStats.HashmapSize <= threshHoldForHybirdShuffle {
-			logutil.Infof("return 4")
 			node.Stats.HashmapStats.Shuffle = false
 			if parent.NodeType == plan.Node_AGG {
 				parent.Stats.HashmapStats.ShuffleMethod = plan.ShuffleMethod_Normal
