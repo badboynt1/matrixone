@@ -49,11 +49,11 @@ func (builder *QueryBuilder) pushdownSemiAntiJoins(nodeID int32) int32 {
 	}
 	switch node.JoinType {
 	case plan.Node_SEMI:
-		if builder.qry.Nodes[node.Children[1]].Stats.Selectivity >= 0.8 {
+		if !node.BuildOnLeft && builder.qry.Nodes[node.Children[1]].Stats.Selectivity >= 0.8 {
 			return nodeID
 		}
 	case plan.Node_ANTI:
-		if builder.qry.Nodes[node.Children[1]].Stats.Selectivity <= 0.1 {
+		if !node.BuildOnLeft && builder.qry.Nodes[node.Children[1]].Stats.Selectivity <= 0.1 {
 			return nodeID
 		}
 	default:
