@@ -347,6 +347,7 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 		rightchild := builder.qry.Nodes[n.Children[1]]
 		factor := math.Pow((leftchild.Stats.Outcnt / rightchild.Stats.Outcnt), 0.3)
 		if n.Stats.HashmapStats.HashmapSize < threshHoldForShuffleJoin*factor {
+			logutil.Infof("return 1")
 			return
 		}
 	}
@@ -354,6 +355,7 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 	//find the highest ndv
 	highestNDV := n.OnList[idx].Ndv
 	if highestNDV < ShuffleThreshHoldOfNDV {
+		logutil.Infof("return 2")
 		return
 	}
 
@@ -381,6 +383,7 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 		n.Stats.HashmapStats.Shuffle = true
 		determinShuffleType(hashCol0, n, builder)
 		if n.Stats.HashmapStats.ShuffleType == plan.ShuffleType_Hash && n.Stats.HashmapStats.HashmapSize < threshHoldForHashShuffle {
+			logutil.Infof("return 3")
 			n.Stats.HashmapStats.Shuffle = false
 		}
 	}
