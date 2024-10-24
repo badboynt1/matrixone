@@ -1615,7 +1615,7 @@ func (builder *QueryBuilder) createQuery() (*Query, error) {
 		builder.determineBuildAndProbeSide(rootID, true)
 		rootID = builder.aggPullup(rootID, rootID)
 		ReCalcNodeStats(rootID, builder, true, false, true)
-		//rootID = builder.pushdownSemiAntiJoins(rootID)
+		rootID = builder.pushdownSemiAntiJoins(rootID)
 		builder.optimizeDistinctAgg(rootID)
 		ReCalcNodeStats(rootID, builder, true, false, true)
 		builder.determineBuildAndProbeSide(rootID, true)
