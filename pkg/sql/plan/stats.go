@@ -677,7 +677,7 @@ func estimateExprSelectivity(expr *plan.Expr, builder *QueryBuilder, s *pb.Stats
 			if cExpr, ok := exprImpl.F.Args[1].Expr.(*plan.Expr_Lit); ok {
 				if c, ok := cExpr.Lit.Value.(*plan.Literal_Sval); ok {
 					if len(c.Sval) > 16 {
-						ret = 0.1
+						ret = 0.05
 					}
 				}
 			}
