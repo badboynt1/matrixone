@@ -586,6 +586,7 @@ func determineShuffleMethod2(nodeID, parentID int32, builder *QueryBuilder) {
 			return
 		}
 		if node.Stats.HashmapStats.HashmapSize <= threshHoldForHybirdShuffle {
+			logutil.Infof("return 4")
 			node.Stats.HashmapStats.Shuffle = false
 			if parent.NodeType == plan.Node_AGG {
 				parent.Stats.HashmapStats.ShuffleMethod = plan.ShuffleMethod_Normal
