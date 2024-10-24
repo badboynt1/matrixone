@@ -345,7 +345,7 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 	} else {
 		leftchild := builder.qry.Nodes[n.Children[0]]
 		rightchild := builder.qry.Nodes[n.Children[1]]
-		factor := math.Pow((leftchild.Stats.Outcnt / rightchild.Stats.Outcnt), 0.3)
+		factor := math.Pow((leftchild.Stats.Outcnt / rightchild.Stats.Outcnt), 0.4)
 		if n.Stats.HashmapStats.HashmapSize < threshHoldForShuffleJoin*factor {
 			return
 		}
