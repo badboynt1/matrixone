@@ -288,8 +288,10 @@ func determinShuffleType(col *plan.ColRef, n *plan.Node, builder *QueryBuilder) 
 	if s == nil {
 		return
 	}
-	if shouldUseHashShuffle(s.ShuffleRangeMap[colName]) {
-		return
+	if n.NodeType == plan.Node_AGG {
+		if shouldUseHashShuffle(s.ShuffleRangeMap[colName]) {
+			return
+		}
 	}
 	n.Stats.HashmapStats.ShuffleType = plan.ShuffleType_Range
 	n.Stats.HashmapStats.ShuffleColMin = int64(s.MinValMap[colName])
@@ -343,7 +345,7 @@ func determinShuffleForJoin(n *plan.Node, builder *QueryBuilder) {
 	} else {
 		leftchild := builder.qry.Nodes[n.Children[0]]
 		rightchild := builder.qry.Nodes[n.Children[1]]
-		factor := math.Pow((leftchild.Stats.Outcnt / rightchild.Stats.Outcnt), 0.5)
+		factor := math.Pow((leftchild.Stats.Outcnt / rightchild.Stats.Outcnt), 0.3)
 		if n.Stats.HashmapStats.HashmapSize < threshHoldForShuffleJoin*factor {
 			return
 		}
