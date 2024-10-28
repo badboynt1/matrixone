@@ -4885,6 +4885,7 @@ func getEngineNode(c *Compile) engine.Node {
 	if c.IsTpQuery() {
 		return engine.Node{Addr: c.addr, Mcpu: 1}
 	} else {
+		logutil.Infof("addr %v ncpu %v", c.addr, ncpu)
 		return engine.Node{Addr: c.addr, Mcpu: ncpu}
 	}
 }
