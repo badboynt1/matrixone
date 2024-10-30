@@ -38,7 +38,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/common/mpool"
 	"github.com/matrixorigin/matrixone/pkg/common/pubsub"
-	"github.com/matrixorigin/matrixone/pkg/common/stage"
 	"github.com/matrixorigin/matrixone/pkg/config"
 	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/defines"
@@ -56,6 +55,8 @@ import (
 	plan2 "github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"github.com/matrixorigin/matrixone/pkg/sql/plan/function"
 	"github.com/matrixorigin/matrixone/pkg/sql/util"
+	"github.com/matrixorigin/matrixone/pkg/stage"
+	"github.com/matrixorigin/matrixone/pkg/stage/stageutil"
 	"github.com/matrixorigin/matrixone/pkg/taskservice"
 	"github.com/matrixorigin/matrixone/pkg/util/metric/mometric"
 	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
@@ -2688,6 +2689,19 @@ func doAlterUser(ctx context.Context, ses *Session, au *alterUser) (err error) {
 	if len(password) == 0 {
 		return moerr.NewInternalError(ctx, "password is empty string")
 	}
+
+	var needValidate bool
+	needValidate, err = needValidatePassword(ses)
+	if err != nil {
+		return err
+	}
+	if needValidate {
+		err = validatePassword(ctx, password, ses, user.Username, ses.GetUserName())
+		if err != nil {
+			return err
+		}
+	}
+
 	//put it into the single transaction
 	err = bh.Exec(ctx, "begin")
 	defer func() {
@@ -3336,7 +3350,7 @@ func doCheckFilePath(ctx context.Context, ses *Session, ep *tree.ExportParam) (e
 	filePath = ep.FilePath
 	if strings.HasPrefix(filePath, stage.STAGE_PROTOCOL+"://") {
 		// stage:// URL
-		s, err := stage.UrlToStageDef(filePath, ses.proc)
+		s, err := stageutil.UrlToStageDef(filePath, ses.proc)
 		if err != nil {
 			return err
 		}
@@ -7809,6 +7823,18 @@ func InitUser(ctx context.Context, ses *Session, tenant *TenantInfo, cu *createU
 		password := user.IdentStr
 		if len(password) == 0 {
 			return moerr.NewInternalError(ctx, "password is empty string")
+		}
+
+		var needValidate bool
+		needValidate, err = needValidatePassword(ses)
+		if err != nil {
+			return err
+		}
+		if needValidate {
+			err = validatePassword(ctx, password, ses, user.Username, ses.GetUserName())
+			if err != nil {
+				return err
+			}
 		}
 
 		//encryption the password

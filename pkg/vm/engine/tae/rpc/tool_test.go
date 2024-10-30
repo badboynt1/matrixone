@@ -12,26 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package stage
+package rpc
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestS3ServiceProvider(t *testing.T) {
-	protocol, err := getS3ServiceFromProvider("cos")
-	require.Nil(t, err)
-	assert.Equal(t, protocol, "s3")
+func Test_objGetArg(t *testing.T) {
+	get := objGetArg{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := get.InitReader(ctx, "abc")
+	assert.Nil(t, err)
+	defer get.fs.Close()
 
-	protocol, err = getS3ServiceFromProvider("amazon")
-	require.Nil(t, err)
-	assert.Equal(t, protocol, "s3")
-
-	protocol, err = getS3ServiceFromProvider("minio")
-	require.Nil(t, err)
-	assert.Equal(t, protocol, "minio")
+	_, err = get.GetData(ctx)
+	assert.Error(t, err)
 
 }
