@@ -47,6 +47,18 @@ func (builder *QueryBuilder) pushdownSemiAntiJoins(nodeID int32) int32 {
 	if node.NodeType != plan.Node_JOIN || (node.JoinType != plan.Node_SEMI && node.JoinType != plan.Node_ANTI) {
 		return nodeID
 	}
+	switch node.JoinType {
+	case plan.Node_SEMI:
+		if !node.BuildOnLeft && builder.qry.Nodes[node.Children[1]].Stats.Selectivity >= 0.8 {
+			return nodeID
+		}
+	case plan.Node_ANTI:
+		if !node.BuildOnLeft && builder.qry.Nodes[node.Children[1]].Stats.Selectivity <= 0.1 {
+			return nodeID
+		}
+	default:
+		return nodeID
+	}
 
 	var targetNode *plan.Node
 	var targetSide int32

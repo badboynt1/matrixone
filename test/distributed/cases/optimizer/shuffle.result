@@ -89,10 +89,8 @@ Project
         Aggregate Functions: starcount(1)
         ->  Join
               Join Type: INNER
-              Join Cond: (t1.c2 = t2.c2)
-              Runtime Filter Build: #[-1,0]
+              Join Cond: (t1.c2 = t2.c2) shuffle: range(t1.c2)
               ->  Table Scan on d1.t1
-                    Runtime Filter Probe: t1.c2
               ->  Table Scan on d1.t2
                     Filter Cond: (t2.c3 < 500000)
                     Block Filter Cond: (t2.c3 < 500000)

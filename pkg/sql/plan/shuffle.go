@@ -38,7 +38,7 @@ const (
 	threshHoldForHybirdShuffle      = 4000000
 	threshHoldForHashShuffle        = 2000000
 	ShuffleThreshHoldOfNDV          = 50000
-	ShuffleTypeThreshHoldLowerLimit = 16
+	ShuffleTypeThreshHoldLowerLimit = 32
 	ShuffleTypeThreshHoldUpperLimit = 1024
 
 	overlapThreshold = 0.95
@@ -296,7 +296,7 @@ func determinShuffleType(col *plan.ColRef, n *plan.Node, builder *QueryBuilder) 
 				if n.BuildOnLeft && leftCost > ShuffleTypeThreshHoldUpperLimit*rightCost {
 					return
 				}
-			} else if leftCost > ShuffleTypeThreshHoldLowerLimit*rightCost {
+			} else if leftCost > ShuffleTypeThreshHoldLowerLimit*rightCost && n.Stats.HashmapStats.HashmapSize > threshHoldForHybirdShuffle {
 				n.Stats.HashmapStats.ShuffleTypeForMultiCN = plan.ShuffleTypeForMultiCN_Hybrid
 			}
 		}
@@ -567,35 +567,6 @@ func determineShuffleMethod(nodeID int32, builder *QueryBuilder) {
 	case plan.Node_JOIN:
 		determinShuffleForJoin(node, builder)
 	default:
-	}
-}
-
-// second pass of determine shuffle
-func determineShuffleMethod2(nodeID, parentID int32, builder *QueryBuilder) {
-	if builder.optimizerHints != nil && builder.optimizerHints.determineShuffle == 1 {
-		return
-	}
-	node := builder.qry.Nodes[nodeID]
-	if len(node.Children) > 0 {
-		for _, child := range node.Children {
-			determineShuffleMethod2(child, nodeID, builder)
-		}
-	}
-	if parentID == -1 {
-		return
-	}
-	parent := builder.qry.Nodes[parentID]
-
-	if node.NodeType == plan.Node_JOIN && node.Stats.HashmapStats.ShuffleTypeForMultiCN == plan.ShuffleTypeForMultiCN_Hybrid {
-		if parent.NodeType == plan.Node_AGG && parent.Stats.HashmapStats.ShuffleMethod == plan.ShuffleMethod_Reuse {
-			return
-		}
-		if node.Stats.HashmapStats.HashmapSize <= threshHoldForHybirdShuffle {
-			node.Stats.HashmapStats.Shuffle = false
-			if parent.NodeType == plan.Node_AGG {
-				parent.Stats.HashmapStats.ShuffleMethod = plan.ShuffleMethod_Normal
-			}
-		}
 	}
 }
 

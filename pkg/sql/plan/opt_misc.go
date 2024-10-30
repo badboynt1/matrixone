@@ -821,6 +821,7 @@ func (builder *QueryBuilder) optimizeLikeExpr(nodeID int32) {
 			if !replaceOrigin {
 				newFilter = DeepCopyExpr(newFilter)
 				newFilters = append(newFilters, newFilter)
+				node.FilterList[i].Selectivity = 1 // replaced by new filter
 			}
 			newFunc := newFilter.GetF()
 			newFunc.Func.ObjName = function.PrefixEqualFunctionName

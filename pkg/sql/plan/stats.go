@@ -674,6 +674,13 @@ func estimateExprSelectivity(expr *plan.Expr, builder *QueryBuilder, s *pb.Stats
 			ret = 1 - estimateExprSelectivity(exprImpl.F.Args[0], builder, s)
 		case "like":
 			ret = 0.2
+			if cExpr, ok := exprImpl.F.Args[1].Expr.(*plan.Expr_Lit); ok {
+				if c, ok := cExpr.Lit.Value.(*plan.Literal_Sval); ok {
+					if len(c.Sval) > 16 {
+						ret = 0.02
+					}
+				}
+			}
 		case "prefix_eq":
 			if containsDynamicParam(expr) {
 				if s != nil {
