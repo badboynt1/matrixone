@@ -3800,7 +3800,7 @@ func (c *Compile) generateCPUNumber(cpunum, blocks int) int {
 	return cpunum
 }
 
-func (c *Compile) determinExpandRanges(n *plan.Node) bool {
+func (c *Compile) expandRangesInCompileTime(n *plan.Node) bool {
 	// Each time the three tables are opened, a new txnTable is created, which can result in Compile and Run holding different partition states. To avoid this, delay opening the three tables until the Run phase
 	if n.ObjRef.SchemaName == catalog.MO_CATALOG && n.TableDef.Name != catalog.MO_TABLES && n.TableDef.Name != catalog.MO_COLUMNS && n.TableDef.Name != catalog.MO_DATABASE {
 		return true //avoid bugs
@@ -4052,7 +4052,7 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, []any, []types.T, e
 		ctx = defines.AttachAccountId(ctx, catalog.System_Account)
 	}
 
-	if c.determinExpandRanges(n) {
+	if c.expandRangesInCompileTime(n) {
 		if c.isPrepare {
 			return nil, nil, nil, cantCompileForPrepareErr
 		}

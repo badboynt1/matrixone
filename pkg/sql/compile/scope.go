@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/matrixorigin/matrixone/pkg/logutil"
+
 	"github.com/panjf2000/ants/v2"
 	"go.uber.org/zap"
 
@@ -585,6 +587,10 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 			newExprList = append(newExprList, s.DataSource.FilterExpr)
 		}
 		s.DataSource.FilterExpr = colexec.RewriteFilterExprList(newExprList)
+	}
+
+	if s.DataSource.node.TableDef.Name == "lineitem" {
+		logutil.Infof("shuffle blocks colmin %v colmax %v", s.DataSource.node.Stats.HashmapStats.ShuffleColMin, s.DataSource.node.Stats.HashmapStats.ShuffleColMax)
 	}
 
 	if s.NodeInfo.NeedExpandRanges {
