@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/matrixorigin/matrixone/pkg/logutil"
+
 	"github.com/panjf2000/ants/v2"
 	"go.uber.org/zap"
 
@@ -587,8 +589,16 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 		s.DataSource.FilterExpr = colexec.RewriteFilterExprList(newExprList)
 	}
 
+	scanNode := s.DataSource.node
+	if scanNode == nil {
+		logutil.Infof("scan node is nil ,current cn %v", c.addr)
+	} else if scanNode.TableDef.Name == "lineitem" {
+
+		logutil.Infof("current cn %v scan node %v stats tablecnt %v outcnt %v, shuffle %v, shuffletype %v, max %v", c.addr, scanNode.TableDef.Name, scanNode.Stats.TableCnt, scanNode.Stats.Outcnt, scanNode.Stats.HashmapStats.Shuffle, scanNode.Stats.HashmapStats.ShuffleType, scanNode.Stats.HashmapStats.ShuffleColMax)
+	}
+
 	if s.NodeInfo.NeedExpandRanges {
-		scanNode := s.DataSource.node
+
 		if scanNode == nil {
 			panic("can not expand ranges on remote pipeline!")
 		}

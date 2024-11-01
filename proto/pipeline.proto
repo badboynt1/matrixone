@@ -535,6 +535,17 @@ message Source {
   bool is_const = 11;
 }
 
+message ShuffleBlockInfo{
+  int32 cn_cnt =1;
+  int32 cn_idx = 2;
+  int32 shuffle_type =3;
+  int64 col_min = 4;
+  int64 col_max = 5;
+  int64 table_cnt = 6;
+  int64 null_cnt = 7;
+ repeated double ranges = 8;
+}
+
 message NodeInfo {
   int32 mcpu = 1;
   string id = 2;
