@@ -550,7 +550,8 @@ message NodeInfo {
   int32 mcpu = 1;
   string id = 2;
   string addr = 3;
-  string payload = 4;
+  ShuffleBlockInfo shuffle_block_info = 4;
+  string payload = 5;
 }
 
 message ProcessLimitation {

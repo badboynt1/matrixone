@@ -591,10 +591,10 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 
 	scanNode := s.DataSource.node
 	if scanNode == nil {
-		logutil.Infof("scan node is nil ,current cn %v", c.addr)
+		logutil.Infof("scan node is nil ,current cn %v  shuffleblockinfo %v", c.addr, s.NodeInfo.ShuffleBlockInfo)
 	} else if scanNode.TableDef.Name == "lineitem" {
 
-		logutil.Infof("current cn %v scan node %v stats tablecnt %v outcnt %v, shuffle %v, shuffletype %v, max %v", c.addr, scanNode.TableDef.Name, scanNode.Stats.TableCnt, scanNode.Stats.Outcnt, scanNode.Stats.HashmapStats.Shuffle, scanNode.Stats.HashmapStats.ShuffleType, scanNode.Stats.HashmapStats.ShuffleColMax)
+		logutil.Infof("current cn %v scan node %v shuffleblockinfo %v", c.addr, scanNode.TableDef.Name, s.NodeInfo.ShuffleBlockInfo)
 	}
 
 	if s.NodeInfo.NeedExpandRanges {

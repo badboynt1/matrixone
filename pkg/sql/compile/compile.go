@@ -4622,6 +4622,16 @@ func shuffleBlocksToMultiCN(c *Compile, rel engine.Relation, relData engine.RelD
 		shuffleBlocksByHash(c, relData, nodes)
 	}
 
+	for i := range nodes {
+		nodes[i].ShuffleBlockInfo.CNCNT = int32(len(c.cnList))
+		nodes[i].ShuffleBlockInfo.CNIDX = int32(i)
+		nodes[i].ShuffleBlockInfo.ShuffleType = int32(n.Stats.HashmapStats.ShuffleType)
+		nodes[i].ShuffleBlockInfo.ColMin = n.Stats.HashmapStats.ShuffleColMin
+		nodes[i].ShuffleBlockInfo.ColMax = n.Stats.HashmapStats.ShuffleColMax
+		nodes[i].ShuffleBlockInfo.TableCnt = int64(n.Stats.TableCnt)
+		nodes[i].ShuffleBlockInfo.NullCnt = n.Stats.HashmapStats.Nullcnt
+		nodes[i].ShuffleBlockInfo.Ranges = n.Stats.HashmapStats.Ranges
+	}
 	return removeEmtpyNodes(c, n, rel, relData, nodes)
 }
 

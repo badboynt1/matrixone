@@ -191,6 +191,16 @@ func generatePipeline(s *Scope, ctx *scopeContext, ctxId int32) (*pipeline.Pipel
 		Addr:    s.NodeInfo.Addr,
 		Mcpu:    int32(s.NodeInfo.Mcpu),
 		Payload: string(data),
+		ShuffleBlockInfo: &pipeline.ShuffleBlockInfo{
+			CnCnt:       s.NodeInfo.ShuffleBlockInfo.CNCNT,
+			CnIdx:       s.NodeInfo.ShuffleBlockInfo.CNIDX,
+			ShuffleType: s.NodeInfo.ShuffleBlockInfo.ShuffleType,
+			ColMin:      s.NodeInfo.ShuffleBlockInfo.ColMin,
+			ColMax:      s.NodeInfo.ShuffleBlockInfo.ColMax,
+			TableCnt:    s.NodeInfo.ShuffleBlockInfo.TableCnt,
+			NullCnt:     s.NodeInfo.ShuffleBlockInfo.NullCnt,
+			Ranges:      s.NodeInfo.ShuffleBlockInfo.Ranges,
+		},
 	}
 	ctx.pipe = p
 	ctx.scope = s
@@ -333,6 +343,14 @@ func generateScope(proc *process.Process, p *pipeline.Pipeline, ctx *scopeContex
 		s.NodeInfo.Id = p.Node.Id
 		s.NodeInfo.Addr = p.Node.Addr
 		s.NodeInfo.Mcpu = int(p.Node.Mcpu)
+		s.NodeInfo.ShuffleBlockInfo.CNCNT = p.Node.ShuffleBlockInfo.CnCnt
+		s.NodeInfo.ShuffleBlockInfo.CNIDX = p.Node.ShuffleBlockInfo.CnIdx
+		s.NodeInfo.ShuffleBlockInfo.ShuffleType = p.Node.ShuffleBlockInfo.ShuffleType
+		s.NodeInfo.ShuffleBlockInfo.ColMin = p.Node.ShuffleBlockInfo.ColMin
+		s.NodeInfo.ShuffleBlockInfo.ColMax = p.Node.ShuffleBlockInfo.ColMax
+		s.NodeInfo.ShuffleBlockInfo.TableCnt = p.Node.ShuffleBlockInfo.TableCnt
+		s.NodeInfo.ShuffleBlockInfo.NullCnt = p.Node.ShuffleBlockInfo.NullCnt
+		s.NodeInfo.ShuffleBlockInfo.Ranges = p.Node.ShuffleBlockInfo.Ranges
 
 		bs := []byte(p.Node.Payload)
 		var relData engine.RelData
