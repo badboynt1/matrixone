@@ -4171,12 +4171,8 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, []any, []types.T, e
 				relData = newRelData
 			}
 		}
+		return putBlocksInCurrentCN(c, relData), partialResults, partialResultTypes, nil
 	}
-
-	// some log for finding a bug.
-	tblId := rel.GetTableID(ctx)
-	expectedLen := relData.DataCnt()
-	c.proc.Debugf(ctx, "cn generateNodes, tbl %d ranges is %d", tblId, expectedLen)
 
 	// if len(ranges) == 0 indicates that it's a temporary table.
 	if relData.DataCnt() == 0 && n.TableDef.TableType != catalog.SystemOrdinaryRel {
@@ -4189,7 +4185,7 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, []any, []types.T, e
 				Data: engine.BuildEmptyRelData(),
 			}
 		}
-		return nodes, partialResults, partialResultTypes, nil
+		return nodes, nil, nil, nil
 	}
 
 	engineType := rel.GetEngineType()
@@ -4197,11 +4193,11 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, []any, []types.T, e
 	// or sometimes force on one CN
 	// if not disttae engine, just put all payloads in current CN
 	if len(c.cnList) == 1 || len(n.OrderBy) > 0 || relData.DataCnt() < plan2.BlockThresholdForOneCN || n.Stats.ForceOneCN || engineType != engine.Disttae {
-		return putBlocksInCurrentCN(c, relData), partialResults, partialResultTypes, nil
+		return putBlocksInCurrentCN(c, relData), nil, nil, nil
 	}
 	// only support disttae engine for now
 	nodes, err = shuffleBlocksToMultiCN(c, rel, relData, n)
-	return nodes, partialResults, partialResultTypes, err
+	return nodes, nil, nil, err
 }
 
 func checkAggOptimize(n *plan.Node) ([]any, []types.T, map[int]int) {
