@@ -41,14 +41,15 @@ import (
 type Nodes []Node
 
 type ShuffleBlockInfo struct {
-	CNCNT       int32 // number of all cns
-	CNIDX       int32 // cn index , starts from 0
-	ShuffleType int32 //0 means range, 1 means hash
-	ColMin      int64
-	ColMax      int64
-	TableCnt    int64
-	NullCnt     int64
-	Ranges      []float64
+	CNCNT         int32 // number of all cns
+	CNIDX         int32 // cn index , starts from 0
+	ShuffleColIdx int32
+	ShuffleType   int32 //0 means range, 1 means hash
+	ColMin        int64
+	ColMax        int64
+	TableCnt      int64
+	NullCnt       int64
+	Ranges        []float64
 }
 
 type Node struct {

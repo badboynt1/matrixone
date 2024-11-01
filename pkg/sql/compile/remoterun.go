@@ -199,6 +199,7 @@ func generatePipeline(s *Scope, ctx *scopeContext, ctxId int32) (*pipeline.Pipel
 			ColMax:      s.NodeInfo.ShuffleBlockInfo.ColMax,
 			TableCnt:    s.NodeInfo.ShuffleBlockInfo.TableCnt,
 			NullCnt:     s.NodeInfo.ShuffleBlockInfo.NullCnt,
+			ShuffleCol:  s.NodeInfo.ShuffleBlockInfo.ShuffleColIdx,
 			Ranges:      s.NodeInfo.ShuffleBlockInfo.Ranges,
 		},
 	}
@@ -350,6 +351,7 @@ func generateScope(proc *process.Process, p *pipeline.Pipeline, ctx *scopeContex
 		s.NodeInfo.ShuffleBlockInfo.ColMax = p.Node.ShuffleBlockInfo.ColMax
 		s.NodeInfo.ShuffleBlockInfo.TableCnt = p.Node.ShuffleBlockInfo.TableCnt
 		s.NodeInfo.ShuffleBlockInfo.NullCnt = p.Node.ShuffleBlockInfo.NullCnt
+		s.NodeInfo.ShuffleBlockInfo.ShuffleColIdx = p.Node.ShuffleBlockInfo.ShuffleCol
 		s.NodeInfo.ShuffleBlockInfo.Ranges = p.Node.ShuffleBlockInfo.Ranges
 
 		bs := []byte(p.Node.Payload)

@@ -21,6 +21,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/matrixorigin/matrixone/pkg/sql/colexec/shuffle"
+
+	"github.com/matrixorigin/matrixone/pkg/objectio"
+
 	"github.com/matrixorigin/matrixone/pkg/logutil"
 
 	"github.com/panjf2000/ants/v2"
@@ -598,11 +602,6 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 	}
 
 	if s.NodeInfo.NeedExpandRanges {
-
-		if scanNode == nil {
-			panic("can not expand ranges on remote pipeline!")
-		}
-
 		for _, e := range s.DataSource.BlockFilterList {
 			err = plan2.EvalFoldExpr(s.Proc, e, &c.filterExprExes)
 			if err != nil {
@@ -616,7 +615,8 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 		}
 
 		crs := new(perfcounter.CounterSet)
-		relData, err := c.expandRanges(s.DataSource.node, s.DataSource.Rel, newExprList, crs)
+		var relData engine.RelData
+		relData, err = c.expandRanges(s.DataSource.node, s.DataSource.Rel, newExprList, crs)
 		if err != nil {
 			return err
 		}
@@ -634,13 +634,27 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 
 		//FIXME:: Do need to attache tombstones? No, because the scope runs on local CN
 		//relData.AttachTombstones()
-		s.NodeInfo.Data = relData
+
+		info := s.NodeInfo.ShuffleBlockInfo
+		if info.CNCNT > 1 {
+			newRelData := relData.BuildEmptyRelData(relData.DataCnt() / int(info.CNCNT))
+			if info.CNIDX == 0 {
+				newRelData.AppendBlockInfo(&objectio.EmptyBlockInfo)
+			}
+			if info.ShuffleType == int32(plan.ShuffleType_Range) {
+				err = shuffle.ShuffleBlocksByRange(c.proc, relData, newRelData, info)
+			} else {
+				err = shuffle.ShuffleBlocksByHash(relData, newRelData, info)
+			}
+			if err != nil {
+				return err
+			}
+		} else {
+			s.NodeInfo.Data = relData
+		}
 
 	} else if len(inExprList) > 0 {
-		s.NodeInfo.Data, err = ApplyRuntimeFilters(c.proc.Ctx, s.Proc, s.DataSource.TableDef, s.NodeInfo.Data, exprs, filters)
-		if err != nil {
-			return err
-		}
+		panic("this should never happend, expand ranges should have been delayed!")
 	}
 	return nil
 }
