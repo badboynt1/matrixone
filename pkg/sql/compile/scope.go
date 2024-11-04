@@ -606,12 +606,16 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 		}
 
 		crs := new(perfcounter.CounterSet)
-		relData, err := c.expandRanges(s.DataSource.node, newExprList, crs)
+		rel, db, ctx, err := c.handleRelationAndContext(s.DataSource.node)
+		if err != nil {
+			return err
+		}
+		relData, err := c.expandRanges(s.DataSource.node, rel, db, ctx, newExprList, crs)
 		if err != nil {
 			return err
 		}
 
-		ctx := c.proc.GetTopContext()
+		ctx = c.proc.GetTopContext()
 		stats := statistic.StatsInfoFromContext(ctx)
 		stats.AddScopePrepareS3Request(statistic.S3Request{
 			List:      crs.FileService.S3.List.Load(),
