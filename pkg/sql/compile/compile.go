@@ -1968,8 +1968,6 @@ func (c *Compile) compileTableScanDataSource(s *Scope) error {
 	s.DataSource.Timestamp = ts
 	s.DataSource.Attributes = attrs
 	s.DataSource.TableDef = tblDef
-	s.DataSource.Ctx = ctx
-	s.DataSource.Db = db
 	s.DataSource.Rel = rel
 	s.DataSource.RelationName = n.TableDef.Name
 	s.DataSource.PartitionRelationNames = partitionRelNames
@@ -3997,8 +3995,13 @@ func collectTombstones(
 }
 
 func (c *Compile) expandRanges(
-	node *plan.Node, rel engine.Relation, db engine.Database, ctx context.Context,
+	node *plan.Node,
 	blockFilterList []*plan.Expr, crs *perfcounter.CounterSet) (engine.RelData, error) {
+
+	rel, db, ctx, err := c.handleDbRelContext(node)
+	if err != nil {
+		return nil, err
+	}
 
 	preAllocSize := 2
 	if !c.IsTpQuery() {
@@ -4010,7 +4013,8 @@ func (c *Compile) expandRanges(
 	}
 
 	newCtx := perfcounter.AttachS3RequestKey(ctx, crs)
-	relData, err := rel.Ranges(newCtx, blockFilterList, preAllocSize, c.TxnOffset)
+	var relData engine.RelData
+	relData, err = rel.Ranges(newCtx, blockFilterList, preAllocSize, c.TxnOffset)
 	if err != nil {
 		return nil, err
 	}
@@ -4132,7 +4136,7 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
 	var relData engine.RelData
 	var nodes engine.Nodes
 
-	rel, db, ctx, err := c.handleDbRelContext(n)
+	rel, _, ctx, err := c.handleDbRelContext(n)
 	if err != nil {
 		return nil, err
 	}
@@ -4173,7 +4177,7 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
 		}
 
 		counterset := new(perfcounter.CounterSet)
-		relData, err = c.expandRanges(n, rel, db, ctx, newFilterExpr, counterset)
+		relData, err = c.expandRanges(n, newFilterExpr, counterset)
 		if err != nil {
 			return nil, err
 		}
@@ -4612,7 +4616,6 @@ func shuffleBlocksToMultiCN(c *Compile, rel engine.Relation, relData engine.RelD
 	})
 	// add memory table block
 	nodes[0].Data = relData.BuildEmptyRelData(relData.DataCnt() / len(c.cnList))
-	nodes[0].Data.AppendBlockInfo(&objectio.EmptyBlockInfo)
 
 	// add the rest of CNs in list
 	for i := range c.cnList {
