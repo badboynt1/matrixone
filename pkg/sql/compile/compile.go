@@ -4133,6 +4133,11 @@ func (c *Compile) handleDbRelContext(node *plan.Node) (engine.Relation, engine.D
 }
 
 func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
+	_, _, _, err := c.handleDbRelContext(n)
+	if err != nil {
+		return nil, err
+	}
+
 	forceSingle := false
 	if len(n.AggList) > 0 {
 		partialResults, _, _ := checkAggOptimize(n)
