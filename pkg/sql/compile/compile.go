@@ -4133,14 +4133,6 @@ func (c *Compile) handleDbRelContext(node *plan.Node) (engine.Relation, engine.D
 }
 
 func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
-	var relData engine.RelData
-	var nodes engine.Nodes
-
-	rel, _, ctx, err := c.handleDbRelContext(n)
-	if err != nil {
-		return nil, err
-	}
-
 	forceSingle := false
 	if len(n.AggList) > 0 {
 		partialResults, _, _ := checkAggOptimize(n)
@@ -4152,47 +4144,9 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
 		forceSingle = true
 	}
 
-	if c.determinExpandRanges(n) {
-		if c.isPrepare {
-			return nil, cantCompileForPrepareErr
-		}
-
-		//@todo need remove expandRanges from Compile.
-		// all expandRanges should be called by Run
-		var newFilterExpr []*plan.Expr
-		if len(n.BlockFilterList) > 0 {
-			newFilterExpr = plan2.DeepCopyExprList(n.BlockFilterList)
-			for _, e := range newFilterExpr {
-				_, err := plan2.ReplaceFoldExpr(c.proc, e, &c.filterExprExes)
-				if err != nil {
-					return nil, err
-				}
-			}
-			for _, e := range newFilterExpr {
-				err = plan2.EvalFoldExpr(c.proc, e, &c.filterExprExes)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-
-		counterset := new(perfcounter.CounterSet)
-		relData, err = c.expandRanges(n, newFilterExpr, counterset)
-		if err != nil {
-			return nil, err
-		}
-
-		stats := statistic.StatsInfoFromContext(ctx)
-		stats.CompileExpandRangesS3Request(statistic.S3Request{
-			List:      counterset.FileService.S3.List.Load(),
-			Head:      counterset.FileService.S3.Head.Load(),
-			Put:       counterset.FileService.S3.Put.Load(),
-			Get:       counterset.FileService.S3.Get.Load(),
-			Delete:    counterset.FileService.S3.Delete.Load(),
-			DeleteMul: counterset.FileService.S3.DeleteMulti.Load(),
-		})
-	} else {
-		// add current CN
+	var nodes engine.Nodes
+	// scan on current CN
+	if len(c.cnList) == 1 || n.Stats.ForceOneCN || forceSingle || n.Stats.BlockNum <= int32(plan2.BlockThresholdForOneCN) {
 		mcpu := c.generateCPUNumber(ncpu, int(n.Stats.BlockNum))
 		if forceSingle {
 			mcpu = 1
@@ -4206,15 +4160,19 @@ func (c *Compile) generateNodes(n *plan.Node) (engine.Nodes, error) {
 		return nodes, nil
 	}
 
-	// for an ordered scan, put all payloads in current CN
-	// or sometimes force on one CN
-	// if not disttae engine, just put all payloads in current CN
-	if len(c.cnList) == 1 || relData.DataCnt() < plan2.BlockThresholdForOneCN || n.Stats.ForceOneCN || forceSingle {
-		return putBlocksInCurrentCN(c, relData, forceSingle), nil
+	// scan on multi CN
+	for i := range c.cnList {
+		nodes = append(nodes, engine.Node{
+			Id:               c.cnList[i].Id,
+			Addr:             c.cnList[i].Addr,
+			Mcpu:             c.cnList[i].Mcpu,
+			CNCNT:            int32(len(c.cnList)),
+			CNIDX:            int32(i),
+			NeedExpandRanges: true,
+		})
 	}
-	// only support disttae engine for now
-	nodes, err = shuffleBlocksToMultiCN(c, rel, relData, n)
-	return nodes, err
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Addr < nodes[j].Addr })
+	return nodes, nil
 }
 
 func checkAggOptimize(n *plan.Node) ([]any, []types.T, map[int]int) {
