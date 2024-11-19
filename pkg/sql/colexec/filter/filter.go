@@ -79,7 +79,6 @@ func (filter *Filter) Call(proc *process.Process) (vm.CallResult, error) {
 	}
 
 	filterBat := inputResult.Batch
-	var sels []int64
 	for i := range filter.ctr.allExecutors {
 		if filterBat.IsEmpty() {
 			break
@@ -100,56 +99,10 @@ func (filter *Filter) Call(proc *process.Process) (vm.CallResult, error) {
 			return vm.CancelResult, moerr.NewInvalidInput(proc.Ctx, "filter condition is not boolean")
 		}
 
-		if filter.ctr.bs == nil {
-			filter.ctr.bs = vector.GenerateFunctionFixedTypeParameter[bool](vec)
-		} else {
-			ok := vector.ReuseFunctionFixedTypeParameter[bool](vec, filter.ctr.bs)
-			if !ok {
-				filter.ctr.bs = vector.GenerateFunctionFixedTypeParameter[bool](vec)
-			}
+		filterBat, err = filter.ctr.shrinkWithBoolVector(proc, filterBat, vec)
+		if err != nil {
+			return vm.CancelResult, err
 		}
-		bs := filter.ctr.bs
-		if vec.IsConst() {
-			v, null := bs.GetValue(0)
-			if null || !v {
-				filterBat, err = filter.ctr.shrinkWithSels(proc, filterBat, nil)
-				if err != nil {
-					return vm.CancelResult, err
-				}
-			}
-		} else {
-			if sels == nil {
-				sels = proc.Mp().GetSels()
-			}
-			sels = sels[:0]
-
-			l := uint64(vec.Length())
-			if bs.WithAnyNullValue() {
-				for j := uint64(0); j < l; j++ {
-					v, null := bs.GetValue(j)
-					if !null && v {
-						sels = append(sels, int64(j))
-					}
-				}
-			} else {
-				for j := uint64(0); j < l; j++ {
-					v, _ := bs.GetValue(j)
-					if v {
-						sels = append(sels, int64(j))
-					}
-				}
-			}
-			if len(sels) != filterBat.RowCount() {
-				filterBat, err = filter.ctr.shrinkWithSels(proc, filterBat, sels)
-				if err != nil {
-					return vm.CancelResult, err
-				}
-			}
-		}
-	}
-
-	if sels != nil {
-		proc.Mp().PutSels(sels)
 	}
 
 	// bad design here. should compile a pipeline like `-> restrict -> output (just do clean work or memory reuse) -> `
@@ -164,35 +117,53 @@ func (filter *Filter) Call(proc *process.Process) (vm.CallResult, error) {
 	return result, nil
 }
 
-func (ctr *container) shrinkWithSels(proc *process.Process, bat *batch.Batch, sels []int64) (*batch.Batch, error) {
-	if len(sels) == 0 {
-		return batch.EmptyBatch, nil
-	}
-	if bat == ctr.buf {
-		ctr.buf.Shrink(sels, false)
+func (ctr *container) shrinkWithBoolVector(proc *process.Process, bat *batch.Batch, vec *vector.Vector) (*batch.Batch, error) {
+	if ctr.bs == nil {
+		ctr.bs = vector.GenerateFunctionFixedTypeParameter[bool](vec)
 	} else {
-		if ctr.buf == nil {
-			ctr.buf = batch.NewWithSize(len(bat.Vecs))
-			ctr.buf.SetAttributes(bat.Attrs)
-			ctr.buf.Recursive = bat.Recursive
-			for j, vec := range bat.Vecs {
-				typ := *bat.GetVector(int32(j)).GetType()
-				ctr.buf.Vecs[j] = vector.NewOffHeapVecWithType(typ)
-				ctr.buf.Vecs[j].SetSorted(vec.GetSorted())
-			}
-			ctr.buf.SetRowCount(bat.RowCount())
-			ctr.buf.ShuffleIDX = bat.ShuffleIDX
-			err := ctr.buf.PreExtend(proc.Mp(), len(sels))
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			ctr.buf.CleanOnlyData()
-		}
-		err := ctr.buf.Union(bat, sels, proc.Mp())
-		if err != nil {
-			return nil, err
+		ok := vector.ReuseFunctionFixedTypeParameter[bool](vec, ctr.bs)
+		if !ok {
+			ctr.bs = vector.GenerateFunctionFixedTypeParameter[bool](vec)
 		}
 	}
+	bs := ctr.bs
+	if vec.IsConst() {
+		v, null := bs.GetValue(0)
+		if null || !v {
+			return batch.EmptyBatch, nil
+		}
+	}
+
+	if ctr.buf1 == nil {
+		ctr.buf1 = bat.DupWithoutData()
+	} else {
+		ctr.buf1.CleanOnlyData()
+	}
+
+	l := vec.Length()
+	if bs.WithAnyNullValue() {
+		for j := 0; j < l; j++ {
+			v, null := bs.GetValue(uint64(j))
+			if !null && v {
+				err := ctr.buf1.UnionOne(bat, int64(j), proc.Mp())
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	} else {
+		for j := 0; j < l; j++ {
+			v, _ := bs.GetValue(uint64(j))
+			if v {
+				err := ctr.buf1.UnionOne(bat, int64(j), proc.Mp())
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	//swap buf and buf1, return buf
+	ctr.buf, ctr.buf1 = ctr.buf1, ctr.buf
 	return ctr.buf, nil
 }
