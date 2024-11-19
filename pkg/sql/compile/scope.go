@@ -597,6 +597,7 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 		}
 	}
 
+	hasPkRuntimeFilter := false
 	var appendNotPkFilter []*plan.Expr
 	for i := range runtimeInExprList {
 		fn := runtimeInExprList[i].GetF()
@@ -607,6 +608,8 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 		pkPos := s.DataSource.TableDef.Name2ColIndex[s.DataSource.TableDef.Pkey.PkeyColName]
 		if pkPos != col.ColPos {
 			appendNotPkFilter = append(appendNotPkFilter, plan2.DeepCopyExpr(runtimeInExprList[i]))
+		} else {
+			hasPkRuntimeFilter = true
 		}
 	}
 
@@ -614,7 +617,8 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 	if len(appendNotPkFilter) > 0 {
 		// put expr in filter instruction
 		op := vm.GetLeafOp(s.RootOp)
-		if _, ok := op.(*table_scan.TableScan); ok {
+		if scanOp, ok := op.(*table_scan.TableScan); ok {
+			scanOp.NeedAccum = hasPkRuntimeFilter
 			op = vm.GetLeafOpParent(nil, s.RootOp)
 		}
 		arg, ok := op.(*filter.Filter)

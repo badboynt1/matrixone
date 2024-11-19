@@ -101,6 +101,10 @@ func (tableScan *TableScan) Call(proc *process.Process) (vm.CallResult, error) {
 		return vm.CancelResult, err
 	}
 
+	if tableScan.ctr.accumBuf != nil {
+		tableScan.ctr.accumBuf.CleanOnlyData()
+	}
+
 	for {
 		// receive topvalue message
 		if tableScan.ctr.msgReceiver != nil {
@@ -135,7 +139,8 @@ func (tableScan *TableScan) Call(proc *process.Process) (vm.CallResult, error) {
 		if tableScan.ctr.buf.IsEmpty() {
 			continue
 		}
-
+		analyzer.InputBlock()
+		analyzer.ScanBytes(tableScan.ctr.buf)
 		trace.GetService(proc.GetService()).TxnRead(
 			proc.GetTxnOperator(),
 			proc.GetTxnOperator().Txn().SnapshotTS,
@@ -143,16 +148,28 @@ func (tableScan *TableScan) Call(proc *process.Process) (vm.CallResult, error) {
 			tableScan.Attrs,
 			tableScan.ctr.buf)
 
-		analyzer.InputBlock()
-		analyzer.ScanBytes(tableScan.ctr.buf)
-		batSize := tableScan.ctr.buf.Size()
-		tableScan.ctr.maxAllocSize = max(tableScan.ctr.maxAllocSize, batSize)
-		break
+		if !tableScan.NeedAccum {
+			break
+		}
+
+		tableScan.ctr.accumBuf, err = tableScan.ctr.accumBuf.AppendWithCopy(proc.Ctx, proc.Mp(), tableScan.ctr.buf)
+		if err != nil {
+			return vm.CancelResult, err
+		}
+		if tableScan.ctr.accumBuf.RowCount() >= process.DefaultBatchSize {
+			break
+		} else {
+			continue
+		}
 	}
+	outBatch := tableScan.ctr.buf
+	if tableScan.NeedAccum {
+		outBatch = tableScan.ctr.accumBuf
+	}
+	tableScan.ctr.maxAllocSize = max(tableScan.ctr.maxAllocSize, outBatch.Size())
 
-	analyzer.Input(tableScan.ctr.buf)
-
-	retBatch, err := tableScan.EvalProjection(tableScan.ctr.buf, proc)
+	analyzer.Input(outBatch)
+	retBatch, err := tableScan.EvalProjection(outBatch, proc)
 	if err != nil {
 		e = err
 		return vm.CancelResult, err
