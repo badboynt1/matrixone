@@ -694,11 +694,6 @@ func (s *Scope) handleRuntimeFilter(c *Compile) error {
 		}
 		s.NodeInfo.Data.AppendBlockInfoSlice(newRelData.GetBlockInfoSlice())
 	} else {
-		tombstones, err := collectTombstones(c, s.DataSource.node, rel, engine.Policy_CollectCommittedTombstones)
-		if err != nil {
-			return err
-		}
-		newRelData.AttachTombstones(tombstones)
 		s.NodeInfo.Data = newRelData
 	}
 
