@@ -17,7 +17,6 @@ package malloc
 import (
 	"io"
 	"net/http"
-	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -45,11 +44,10 @@ func newDefault(delta *Config) (allocator Allocator) {
 	}
 
 	// debug
-	if os.Getenv("MO_MALLOC_DEBUG") != "" {
-		config.CheckFraction = ptrTo(uint32(1))
-		config.FullStackFraction = ptrTo(uint32(1))
-		config.EnableMetrics = ptrTo(true)
-	}
+
+	config.CheckFraction = ptrTo(uint32(1))
+	config.FullStackFraction = ptrTo(uint32(1))
+	config.EnableMetrics = ptrTo(true)
 
 	// profile
 	defer func() {
