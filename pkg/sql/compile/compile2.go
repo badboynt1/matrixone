@@ -161,9 +161,13 @@ func (c *Compile) Run(_ uint64) (queryResult *util2.RunResult, err error) {
 	var sequence = uint64(0)
 	var writeOffset = uint64(0)
 	if txnOperator != nil {
+		c.proc.GetTxnOperator().GetWorkspace().UpdateSnapshotWriteOffset()
+		c.TxnOffset = c.proc.GetTxnOperator().GetWorkspace().GetSnapshotWriteOffset()
 		sequence = txnOperator.NextSequence()
 		writeOffset = uint64(txnOperator.GetWorkspace().GetSnapshotWriteOffset())
 		txnOperator.GetWorkspace().IncrSQLCount()
+	} else {
+		c.TxnOffset = 0
 	}
 
 	var isExplainPhyPlan = false
