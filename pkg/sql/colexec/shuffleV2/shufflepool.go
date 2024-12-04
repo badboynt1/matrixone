@@ -95,6 +95,7 @@ func (sp *ShufflePoolV2) Reset(m *mpool.MPool) {
 	}
 	for i := range sp.batches {
 		if sp.batches[i] != nil {
+			logutil.Infof("!!!!!!!!!!!!!!!!!!! clean batch shuffleidx %v rowcnt %v", i, sp.batches[i].RowCount())
 			sp.batches[i].Clean(m)
 		}
 	}
