@@ -701,9 +701,9 @@ func rangeShuffle(ap *ShuffleV2, bat *batch.Batch, proc *process.Process) (*batc
 		ok, regIndex := allBatchInOneRange(ap, bat)
 		if ok {
 			bat.ShuffleIDX = int32(regIndex)
-			if bat.ShuffleIDX == ap.CurrentShuffleIdx {
-				return bat, nil
-			}
+			//if bat.ShuffleIDX == ap.CurrentShuffleIdx {
+			//	return bat, nil
+			//}
 			err := ap.ctr.shufflePool.putAllBatchIntoPoolByShuffleIdx(bat, proc, bat.ShuffleIDX)
 			return nil, err
 		}
@@ -720,9 +720,9 @@ func rangeShuffle(ap *ShuffleV2, bat *batch.Batch, proc *process.Process) (*batc
 		}
 		if len(sels[i]) == bat.RowCount() { // all batch in one range
 			bat.ShuffleIDX = int32(i)
-			if bat.ShuffleIDX == ap.CurrentShuffleIdx {
-				return bat, nil
-			}
+			//if bat.ShuffleIDX == ap.CurrentShuffleIdx {
+			//	return bat, nil
+			//}
 			err := ap.ctr.shufflePool.putAllBatchIntoPoolByShuffleIdx(bat, proc, bat.ShuffleIDX)
 			return nil, err
 		}
