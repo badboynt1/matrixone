@@ -86,6 +86,7 @@ SENDLAST:
 		if bat == nil {
 			shuffle.ctr.ending = true
 			shuffle.ctr.shufflePool.stopWriting()
+			shuffle.ctr.shufflePool.Print()
 			goto SENDLAST
 		} else if !bat.IsEmpty() {
 			if shuffle.ShuffleType == int32(plan.ShuffleType_Hash) {
