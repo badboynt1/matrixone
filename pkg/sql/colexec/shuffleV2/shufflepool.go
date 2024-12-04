@@ -39,6 +39,8 @@ type ShufflePoolV2 struct {
 	batchWaiters  []chan bool
 	inputCNT      []int64 //for debug
 	outputCNT     []int64
+	inputTotal    int64
+	outputTotal   int64
 }
 
 func NewShufflePool(bucketNum int32, maxHolders int32) *ShufflePoolV2 {
@@ -62,7 +64,8 @@ func NewShufflePool(bucketNum int32, maxHolders int32) *ShufflePoolV2 {
 	}
 	sp.inputCNT = make([]int64, bucketNum)
 	sp.outputCNT = make([]int64, bucketNum)
-
+	sp.inputTotal = 0
+	sp.outputTotal = 0
 	return sp
 }
 
@@ -98,17 +101,17 @@ func (sp *ShufflePoolV2) Reset(m *mpool.MPool) {
 		return // still some other shuffle operators working
 	}
 
-	logutil.Infof("debug shuffle inputcnt %v", sp.inputCNT)
-	logutil.Infof("debug shuffle outputcnt %v", sp.outputCNT)
 	for i := range sp.inputCNT {
-		if sp.inputCNT[i] != sp.outputCNT[i] {
-			logutil.Infof("debug shuffle !!!!!!!!!! maybe something wrong for idx %v", i)
-		}
+		sp.inputTotal += sp.inputCNT[i]
+		sp.outputTotal += sp.outputCNT[i]
 	}
+
+	logutil.Infof("debug shuffle input total %v inputcnt %v", sp.inputTotal, sp.inputCNT)
+	logutil.Infof("debug shuffle output total %v outputcnt %v", sp.outputTotal, sp.outputCNT)
 
 	for i := range sp.batches {
 		if sp.batches[i] != nil {
-			logutil.Infof("debug shuffle clean batch shuffleidx %v rowcnt %v", i, sp.batches[i].RowCount())
+			logutil.Infof("debug shuffle clean batch !!!!!!!!!!!!!! shuffleidx %v rowcnt %v", i, sp.batches[i].RowCount())
 			sp.batches[i].Clean(m)
 		}
 	}
@@ -120,6 +123,8 @@ func (sp *ShufflePoolV2) Reset(m *mpool.MPool) {
 	sp.batchWaiters = nil
 	sp.inputCNT = nil
 	sp.outputCNT = nil
+	sp.inputTotal = 0
+	sp.outputTotal = 0
 }
 
 func (sp *ShufflePoolV2) Print() { // only for debug
