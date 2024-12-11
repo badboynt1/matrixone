@@ -123,6 +123,39 @@ func (or *ObjListRelData) Split(cpunum int) []engine.RelData {
 		blks := objectio.ObjectStatsToBlockInfoSlice(&or.Objlist[i], false)
 		result[shuffleIDX].AppendBlockInfoSlice(blks)
 	}
+	//make result average
+	for {
+		maxCnt := result[0].DataCnt()
+		minCnt := result[0].DataCnt()
+		maxIdx := -1
+		minIdx := -1
+		for i := range result {
+			if result[i].DataCnt() > maxCnt {
+				maxCnt = result[i].DataCnt()
+				maxIdx = i
+			}
+			if result[i].DataCnt() < minCnt {
+				minCnt = result[i].DataCnt()
+				minIdx = i
+			}
+		}
+		if maxCnt < minCnt*2 {
+			break
+		}
+
+		diff := (maxCnt-minCnt)/3 + 1
+		cut_from := result[maxIdx].DataCnt() - diff
+		result[minIdx].AppendBlockInfoSlice(result[maxIdx].DataSlice(cut_from, maxCnt).GetBlockInfoSlice())
+		result[maxIdx] = result[maxIdx].DataSlice(0, cut_from)
+	}
+	//check total block cnt
+	totalBlocks := 0
+	for i := range result {
+		totalBlocks += result[i].DataCnt()
+	}
+	if totalBlocks != int(or.TotalBlocks) {
+		panic("wrong blocks cnt after objlist reldata split!")
+	}
 	return result
 }
 
