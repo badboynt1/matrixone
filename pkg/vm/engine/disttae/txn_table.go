@@ -621,7 +621,9 @@ func (tbl *txnTable) getObjList(ctx context.Context, rangesParam engine.RangesPa
 	}
 
 	data = objRelData
-	logutil.Infof("debug objlist cnidx %v reldata tablename %v objs %v blocks %v", rangesParam.Rsp.CNIDX, tbl.tableName, len(objRelData.Objlist), objRelData.TotalBlocks)
+	if tbl.tableName == "lineitem" {
+		logutil.Infof("debug objlist cnidx %v reldata tablename %v objs %v blocks %v", rangesParam.Rsp.CNIDX, tbl.tableName, len(objRelData.Objlist), objRelData.TotalBlocks)
+	}
 	return
 }
 
