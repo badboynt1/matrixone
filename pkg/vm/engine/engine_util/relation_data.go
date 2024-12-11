@@ -127,8 +127,8 @@ func (or *ObjListRelData) Split(cpunum int) []engine.RelData {
 	for {
 		maxCnt := result[0].DataCnt()
 		minCnt := result[0].DataCnt()
-		maxIdx := -1
-		minIdx := -1
+		maxIdx := 0
+		minIdx := 0
 		for i := range result {
 			if result[i].DataCnt() > maxCnt {
 				maxCnt = result[i].DataCnt()
