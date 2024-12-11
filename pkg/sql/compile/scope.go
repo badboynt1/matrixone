@@ -614,6 +614,9 @@ func (s *Scope) getRelData(c *Compile, blockExprList []*plan.Expr) error {
 		commited.AttachTombstones(tombstones)
 		s.NodeInfo.Data = commited
 	}
+	if s.DataSource.node.TableDef.Name == "lineitem" {
+		logutil.Infof("debug lineitem cnidx %v get blocks %v", s.NodeInfo.CNIDX, s.NodeInfo.Data.DataCnt())
+	}
 	return nil
 }
 
