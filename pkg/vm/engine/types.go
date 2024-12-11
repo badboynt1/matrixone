@@ -699,7 +699,7 @@ type RelData interface {
 	AppendShardID(id uint64)
 
 	// for block info list
-	Split(i int) []RelData
+	Split(cpunum int) []RelData
 	GetBlockInfoSlice() objectio.BlockInfoSlice
 	GetBlockInfo(i int) objectio.BlockInfo
 	SetBlockInfo(i int, blk *objectio.BlockInfo)

@@ -587,6 +587,7 @@ func (tbl *txnTable) getObjList(ctx context.Context, rangesParam engine.RangesPa
 	needUncommited := rangesParam.Policy&engine.Policy_CollectUncommittedData != 0
 	objRelData := &engine_util.ObjListRelData{
 		NeedFirstEmpty: needUncommited,
+		Rsp:            rangesParam.Rsp,
 	}
 
 	if needUncommited {
