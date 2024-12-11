@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/matrixorigin/matrixone/pkg/logutil"
+
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/objectio"
@@ -219,6 +221,11 @@ func (relData *BlockListRelData) Split(i int) []engine.RelData {
 		} else {
 			shards[j] = relData.DataSlice(current, current+divide)
 			current = current + divide
+		}
+	}
+	if relData.DataCnt() > 100 {
+		for k := range shards {
+			logutil.Infof("debug lineitem input blocks %v output blocks %v on idx %v", relData.DataCnt(), shards[k].DataCnt(), i)
 		}
 	}
 	return shards
