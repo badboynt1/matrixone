@@ -16,6 +16,7 @@ package plan
 
 import (
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"slices"
 	"sort"
 
@@ -397,6 +398,10 @@ func (builder *QueryBuilder) applyIndicesForFiltersRegularIndex(nodeID int32, no
 		if ret != -1 {
 			return ret
 		}
+	}
+
+	if node.TableDef.Name == "sbtest1" {
+		logutil.Infof("debug: table sbtest1, sel %v , outcnt", node.Stats.Selectivity, node.Stats.Outcnt)
 	}
 
 	//default stats means this table maybe not flushed yet, then we don't skip the index
