@@ -16,9 +16,10 @@ package plan
 
 import (
 	"fmt"
-	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"slices"
 	"sort"
+
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 
 	"github.com/matrixorigin/matrixone/pkg/catalog"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
@@ -400,12 +401,13 @@ func (builder *QueryBuilder) applyIndicesForFiltersRegularIndex(nodeID int32, no
 		}
 	}
 
-	if node.TableDef.Name == "sbtest1" {
-		logutil.Infof("debug: table sbtest1, stats %v", node.Stats)
-	}
-
 	//default stats means this table maybe not flushed yet, then we don't skip the index
 	ignoreStats := IsDefaultStats(node.Stats)
+
+	if node.TableDef.Name == "sbtest1" {
+		logutil.Infof("debug: table sbtest1, stats %v, ignorestats %v lenfilters %v", node.Stats, ignoreStats, len(node.FilterList))
+	}
+
 	if !ignoreStats {
 		if catalog.IsFakePkName(node.TableDef.Pkey.PkeyColName) {
 			// for cluster by table, make it less prone to go index
