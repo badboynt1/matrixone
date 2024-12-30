@@ -401,7 +401,7 @@ func (builder *QueryBuilder) applyIndicesForFiltersRegularIndex(nodeID int32, no
 	}
 
 	if node.TableDef.Name == "sbtest1" {
-		logutil.Infof("debug: table sbtest1, sel %v , outcnt", node.Stats.Selectivity, node.Stats.Outcnt)
+		logutil.Infof("debug: table sbtest1, stats %v", node.Stats)
 	}
 
 	//default stats means this table maybe not flushed yet, then we don't skip the index
