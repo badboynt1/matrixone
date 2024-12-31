@@ -781,9 +781,17 @@ func (builder *QueryBuilder) tryIndexOnlyScan(idxDef *IndexDef, node *plan.Node,
 }
 
 func (builder *QueryBuilder) getIndexForNonEquiCond(indexes []*IndexDef, node *plan.Node) (int, []int32) {
+
+	if node.TableDef.Name == "sbtest1" {
+		logutil.Infof("debug: table sbtest1 try nonequal index, len indexes %v", len(indexes))
+	}
+
 	// Apply single-column unique/secondary indices for non-equi expression
 	colPos2Idx := make(map[int32]int)
 	for i, idxDef := range indexes {
+		if node.TableDef.Name == "sbtest1" {
+			logutil.Infof("debug: table sbtest1 try nonequal index %v, unique %v,  parts %v ", i, idxDef.Unique, idxDef.Parts)
+		}
 		numParts := len(idxDef.Parts)
 		if !idxDef.Unique {
 			numParts--
@@ -795,8 +803,17 @@ func (builder *QueryBuilder) getIndexForNonEquiCond(indexes []*IndexDef, node *p
 		}
 	}
 
+	if node.TableDef.Name == "sbtest1" {
+		logutil.Infof("debug: table sbtest1 try nonequal  colpos2idx %v", colPos2Idx)
+	}
+
 	for i := range node.FilterList {
 		filterType, col := checkIndexFilter(node.FilterList[i].GetF())
+
+		if node.TableDef.Name == "sbtest1" {
+			logutil.Infof("debug: table sbtest1 try filter %v, filtertype %v col %v", i, filterType, col)
+		}
+
 		if filterType == NonEqualIndexCondition {
 			idxPos, ok := colPos2Idx[col.ColPos]
 			if ok {
