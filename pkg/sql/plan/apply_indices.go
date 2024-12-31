@@ -19,6 +19,8 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/matrixorigin/matrixone/pkg/logutil"
+
 	"github.com/matrixorigin/matrixone/pkg/catalog"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
 )
@@ -401,6 +403,11 @@ func (builder *QueryBuilder) applyIndicesForFiltersRegularIndex(nodeID int32, no
 
 	//small table means this table maybe not flushed yet, or it's not worse to go index
 	ignoreStats := node.Stats.TableCnt < 50000
+
+	if node.TableDef.Name == "sbtest1" {
+		logutil.Infof("debug: table sbtest1, stats %v, ignorestats %v lenfilters %v", node.Stats, ignoreStats, len(node.FilterList))
+	}
+
 	if !ignoreStats {
 		if catalog.IsFakePkName(node.TableDef.Pkey.PkeyColName) {
 			// for cluster by table, make it less prone to go index
@@ -416,6 +423,9 @@ func (builder *QueryBuilder) applyIndicesForFiltersRegularIndex(nodeID int32, no
 	// Apply unique/secondary indices for point select
 	idxToChoose, filterIdx := builder.getMostSelectiveIndexForPointSelect(indexes, node, ignoreStats)
 	if idxToChoose != -1 {
+		if node.TableDef.Name == "sbtest1" {
+			logutil.Infof("debug: table sbtest1 go point select index, stats %v, ignorestats %v lenfilters %v", node.Stats, ignoreStats, len(node.FilterList))
+		}
 		retID, idxTableNodeID := builder.applyIndexJoin(indexes[idxToChoose], node, EqualIndexCondition, filterIdx, scanSnapshot)
 		builder.applyExtraFiltersOnIndex(indexes[idxToChoose], node, builder.qry.Nodes[idxTableNodeID], filterIdx)
 		return retID
@@ -423,11 +433,17 @@ func (builder *QueryBuilder) applyIndicesForFiltersRegularIndex(nodeID int32, no
 
 	idxToChoose, filterIdx = builder.getIndexForNonEquiCond(indexes, node)
 	if idxToChoose != -1 {
+		if node.TableDef.Name == "sbtest1" {
+			logutil.Infof("debug: table sbtest1 go non equal index, stats %v, ignorestats %v lenfilters %v", node.Stats, ignoreStats, len(node.FilterList))
+		}
 		retID, idxTableNodeID := builder.applyIndexJoin(indexes[idxToChoose], node, NonEqualIndexCondition, filterIdx, scanSnapshot)
 		builder.applyExtraFiltersOnIndex(indexes[idxToChoose], node, builder.qry.Nodes[idxTableNodeID], filterIdx)
 		return retID
 	}
 
+	if node.TableDef.Name == "sbtest1" {
+		logutil.Infof("debug: table sbtest1 go non index!!!!!!!!, stats %v, ignorestats %v lenfilters %v", node.Stats, ignoreStats, len(node.FilterList))
+	}
 	//no index applied
 	return nodeID
 }
