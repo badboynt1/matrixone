@@ -200,6 +200,16 @@ func (s *Scope) Run(c *Compile) (err error) {
 			_, err = p.RunWithReader(s.DataSource.R, tag, s.Proc)
 		}
 	}
+
+	if s.Proc == nil {
+		logutil.Infof("scope %v proc is nil!!!!!!!!", s)
+		c.printPipeline()
+	}
+	if s.Proc.Ctx == nil {
+		logutil.Infof("scope %v proc %v ctx is nil!!!!!!!!", s, s.Proc)
+		c.printPipeline()
+	}
+
 	select {
 	case <-s.Proc.Ctx.Done():
 		err = nil
